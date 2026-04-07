@@ -220,6 +220,9 @@ def scrape_profile(platform: str, url: str, download_dir: Path,
                    full_rescan: bool = False) -> list[Path]:
     """Scrape images from a profile URL.
 
+    For Twitter: uses GraphQL API directly (gallery-dl approach) — no Selenium.
+    For LinkedIn: uses Selenium with cookie injection.
+
     Args:
         tracker: If provided, skips already-downloaded URLs and records new ones.
         full_rescan: If True, ignores progress and re-downloads everything.
@@ -229,25 +232,90 @@ def scrape_profile(platform: str, url: str, download_dir: Path,
     domain = _resolve_domain(platform, url)
     pkey = _profile_key(platform, url)
 
-    # Get and validate cookies
     cookies = _get_cookies(platform, cookie_file, browser)
     if not cookies:
         log.warning("No cookies found for %s — log in via your browser first.", platform)
+        return []
+
+    # Twitter: use GraphQL API (like gallery-dl)
+    if platform == "twitter":
+        return _scrape_twitter_api(url, cookies, pkey, download_dir,
+                                   tracker, full_rescan)
+
+    # LinkedIn: use Selenium
+    return _scrape_selenium(platform, url, cookies, domain, pkey, download_dir,
+                            headless, scroll_count, scroll_delay, tracker, full_rescan)
+
+
+def _scrape_twitter_api(url: str, cookies: dict, pkey: str,
+                        download_dir: Path,
+                        tracker: ProgressTracker | None,
+                        full_rescan: bool) -> list[Path]:
+    """Scrape Twitter using GraphQL API — no Selenium needed."""
+    from twitter_api import TwitterAPI
+
+    # Extract screen_name from URL
+    screen_name = url.rstrip("/").split("/")[-2]  # .../username/media
+    if screen_name in ("x.com", "twitter.com", ""):
+        screen_name = url.rstrip("/").split("/")[-1]
+
+    log.info("🐦 Using Twitter GraphQL API for @%s", screen_name)
+    api = TwitterAPI(cookies)
+
+    try:
+        items = api.user_media(screen_name)
+    except Exception as e:
+        log.error("Twitter API failed for @%s: %s", screen_name, e)
+        return []
+
+    log.info("Found %d media items from @%s via API", len(items), screen_name)
+
+    if tracker and not full_rescan:
+        before = len(items)
+        items = [it for it in items if not tracker.is_known(pkey, it["url"])]
+        if before - len(items):
+            log.info("Skipping %d already-downloaded images", before - len(items))
 
     session = _make_session(cookies)
-    if cookies and not _verify_session(session, platform):
-        log.warning("Session for %s appears expired. Retrying...", platform)
-        cache = SESSION_CACHE / f"{platform}.json"
-        cache.unlink(missing_ok=True)
-        cookies = _get_cookies(platform, cookie_file, browser)
-        session = _make_session(cookies)
+    downloaded = []
+    download_dir.mkdir(parents=True, exist_ok=True)
 
-    # Scrape with Selenium
+    for i, item in enumerate(items):
+        img_url = item["url"]
+        try:
+            resp = session.get(img_url, timeout=15)
+            resp.raise_for_status()
+        except Exception as e:
+            log.warning("Failed to download %s: %s", img_url, e)
+            continue
+
+        ext = _guess_ext(resp.headers.get("content-type", ""), img_url)
+        fname = download_dir / f"{item.get('tweet_id', 'img')}_{i:04d}{ext}"
+        fname.write_bytes(resp.content)
+        downloaded.append(fname)
+        log.info("📥 [twitter] %d/%d  %s  (%.0f KB)",
+                 i + 1, len(items), fname.name, len(resp.content) / 1024)
+
+        if tracker:
+            tracker.record(pkey, img_url, item["ts"])
+
+        time.sleep(random.uniform(0.5, 1.5))
+
+    return downloaded
+
+
+def _scrape_selenium(platform: str, url: str, cookies: dict, domain: str,
+                     pkey: str, download_dir: Path,
+                     headless: bool, scroll_count: int, scroll_delay: float,
+                     tracker: ProgressTracker | None,
+                     full_rescan: bool) -> list[Path]:
+    """Scrape using Selenium (for LinkedIn and fallback)."""
+    session = _make_session(cookies)
+
     driver = _make_driver(headless)
     downloaded = []
     try:
-        if cookies:
-            _inject_cookies(driver, cookies, domain)
+        _inject_cookies(driver, cookies, domain)
 
         items = _scroll_and_collect(driver, url, scroll_count, scroll_delay)
         log.info("Found %d candidate images on %s", len(items), url)
@@ -327,26 +395,23 @@ def discover_following(platform: str, headless: bool = True,
                        cookie_file: str | None = None,
                        browser: str | None = None,
                        scroll_count: int = 10) -> list[dict]:
-    """Discover profiles the authenticated user follows.
-
-    Returns list of {"platform": ..., "url": ...} dicts suitable for config.
-    """
+    """Discover profiles the authenticated user follows."""
     cookies = _get_cookies(platform, cookie_file, browser)
     if not cookies:
         log.error("Cannot discover following without cookies for %s", platform)
         return []
 
-    domain = "linkedin.com" if platform == "linkedin" else "x.com"
+    # Twitter: use GraphQL API (no Selenium)
+    if platform == "twitter":
+        return _discover_twitter_api(cookies)
+
+    # LinkedIn: Selenium
+    domain = "linkedin.com"
     driver = _make_driver(headless)
     profiles = []
-
     try:
         _inject_cookies(driver, cookies, domain)
-
-        if platform == "twitter":
-            profiles = _discover_twitter_following(driver, scroll_count)
-        elif platform == "linkedin":
-            profiles = _discover_linkedin_following(driver, scroll_count)
+        profiles = _discover_linkedin_following(driver, scroll_count)
     except Exception as e:
         log.error("Failed to discover following on %s: %s", platform, e)
     finally:
@@ -356,80 +421,37 @@ def discover_following(platform: str, headless: bool = True,
     return profiles
 
 
-def _discover_twitter_following(driver: webdriver.Chrome,
-                                scroll_count: int) -> list[dict]:
-    # Get username: navigate to profile settings which redirects to /username
-    driver.get("https://x.com/settings/profile")
-    time.sleep(3)
+def _discover_twitter_api(cookies: dict) -> list[dict]:
+    """Discover Twitter following via GraphQL API."""
+    from twitter_api import TwitterAPI
 
-    username = None
-    # Method 1: extract from current URL after redirect
-    for _ in range(5):
-        url = driver.current_url
-        # Settings page URL contains username in some cases, or check page source
-        username = driver.execute_script("""
-            // Try multiple known locations for screen_name
-            var el = document.querySelector('a[href$="/following"]');
-            if (el) return el.href.split('/').slice(-2)[0];
-            el = document.querySelector('a[data-testid="AppTabBar_Profile_Link"]');
-            if (el) return el.href.split('/').pop();
-            // Try the <link rel="canonical"> or meta tags
-            var links = document.querySelectorAll('link[rel="canonical"]');
-            for (var l of links) { var m = l.href.match(/x\\.com\\/([^/]+)/); if (m) return m[1]; }
-            return null;
-        """)
-        if username:
-            break
-        time.sleep(1)
+    api = TwitterAPI(cookies)
 
-    # Method 2: go to /home and scrape from sidebar
-    if not username:
-        driver.get("https://x.com/home")
-        time.sleep(3)
-        username = driver.execute_script("""
-            // Sidebar nav profile link
-            var links = document.querySelectorAll('nav a[href]');
-            for (var a of links) {
-                var m = a.href.match(/x\\.com\\/([A-Za-z0-9_]+)$/);
-                if (m && !['home','explore','notifications','messages','settings','i'].includes(m[1]))
-                    return m[1];
-            }
-            return null;
-        """)
-
-    if not username:
-        log.error("Could not determine Twitter username. Are you logged in to Firefox?")
+    # First get our own screen name
+    try:
+        # Use the settings endpoint to get current user
+        resp = api.session.get("https://x.com/i/api/1.1/account/settings.json",
+                               headers=api.headers, timeout=10)
+        resp.raise_for_status()
+        username = resp.json().get("screen_name")
+        if not username:
+            log.error("Could not determine Twitter username from API")
+            return []
+        log.info("Twitter user: @%s", username)
+    except Exception as e:
+        log.error("Failed to get Twitter username: %s", e)
         return []
 
-    log.info("Discovered Twitter username: %s", username)
-    driver.get(f"https://x.com/{username}/following")
-    time.sleep(3)
+    try:
+        following = api.user_following(username)
+        log.info("Discovered %d followed accounts on Twitter", len(following))
+        return [{"platform": "twitter", "url": f"https://x.com/{name}/media"}
+                for name in following]
+    except Exception as e:
+        log.error("Failed to get Twitter following list: %s", e)
+        return []
 
-    seen = set()
-    profiles = []
-    for _ in range(scroll_count):
-        # Collect all user profile links on the page
-        hrefs = driver.execute_script("""
-            var urls = new Set();
-            document.querySelectorAll('a[href]').forEach(function(a) {
-                var m = a.href.match(/^https:\\/\\/x\\.com\\/([A-Za-z0-9_]+)$/);
-                if (m) urls.add(m[1]);
-            });
-            return Array.from(urls);
-        """)
-        skip = {username, "home", "explore", "notifications", "messages",
-                "settings", "i", "search", "compose", "tos", "privacy"}
-        for name in hrefs:
-            if name not in seen and name.lower() not in skip:
-                seen.add(name)
-                profiles.append({
-                    "platform": "twitter",
-                    "url": f"https://x.com/{name}/media"
-                })
-        driver.execute_script("window.scrollBy(0, window.innerHeight);")
-        time.sleep(1.5)
 
-    return profiles
 
 
 def _discover_linkedin_following(driver: webdriver.Chrome,
