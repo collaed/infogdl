@@ -361,27 +361,47 @@ def _discover_twitter_following(driver: webdriver.Chrome,
 
 def _discover_linkedin_following(driver: webdriver.Chrome,
                                  scroll_count: int) -> list[dict]:
-    driver.get("https://www.linkedin.com/mynetwork/network-manager/people-follow/following/")
-    time.sleep(3)
+    # LinkedIn has multiple pages where followed/connected people appear
+    urls_to_try = [
+        "https://www.linkedin.com/mynetwork/network-manager/people-follow/following/",
+        "https://www.linkedin.com/mynetwork/invite-connect/connections/",
+    ]
 
     seen = set()
     profiles = []
-    for _ in range(scroll_count):
-        links = driver.find_elements(By.CSS_SELECTOR,
-            'a.mn-connection-card__link, a.ember-view[href*="/in/"]')
-        for link in links:
-            href = link.get_attribute("href") or ""
-            if "/in/" in href:
-                # Normalize to just the profile slug
-                slug = href.split("/in/")[1].rstrip("/").split("?")[0]
-                if slug and slug not in seen:
+
+    for page_url in urls_to_try:
+        driver.get(page_url)
+        time.sleep(4)
+
+        for _ in range(scroll_count):
+            # Use JS to grab all /in/ links — works regardless of CSS class changes
+            slugs = driver.execute_script("""
+                var results = new Set();
+                document.querySelectorAll('a[href*="/in/"]').forEach(function(a) {
+                    var m = a.href.match(/\\/in\\/([A-Za-z0-9_-]+)/);
+                    if (m) results.add(m[1]);
+                });
+                return Array.from(results);
+            """)
+            for slug in slugs:
+                if slug not in seen:
                     seen.add(slug)
                     profiles.append({
                         "platform": "linkedin",
                         "url": f"https://www.linkedin.com/in/{slug}/recent-activity/shares/"
                     })
-        driver.execute_script("window.scrollBy(0, window.innerHeight);")
-        time.sleep(1.5)
+
+            # Try clicking "Show more" button if present
+            driver.execute_script("""
+                var btn = document.querySelector('button.scaffold-finite-scroll__load-button')
+                       || document.querySelector('button[aria-label*="more"]');
+                if (btn) btn.click();
+            """)
+            driver.execute_script("window.scrollBy(0, window.innerHeight);")
+            time.sleep(2)
+
+        log.info("Found %d profiles from %s", len(seen), page_url)
 
     return profiles
 
