@@ -248,6 +248,119 @@ def _resolve_domain(platform: str, url: str) -> str:
     return "x.com" if "x.com" in url else "twitter.com"
 
 
+# -- Following discovery --
+
+def discover_following(platform: str, headless: bool = True,
+                       cookie_file: str | None = None,
+                       browser: str | None = None,
+                       scroll_count: int = 10) -> list[dict]:
+    """Discover profiles the authenticated user follows.
+
+    Returns list of {"platform": ..., "url": ...} dicts suitable for config.
+    """
+    cookies = _get_cookies(platform, cookie_file, browser)
+    if not cookies:
+        log.error("Cannot discover following without cookies for %s", platform)
+        return []
+
+    domain = "linkedin.com" if platform == "linkedin" else "x.com"
+    driver = _make_driver(headless)
+    profiles = []
+
+    try:
+        _inject_cookies(driver, cookies, domain)
+
+        if platform == "twitter":
+            profiles = _discover_twitter_following(driver, scroll_count)
+        elif platform == "linkedin":
+            profiles = _discover_linkedin_following(driver, scroll_count)
+    except Exception as e:
+        log.error("Failed to discover following on %s: %s", platform, e)
+    finally:
+        driver.quit()
+
+    log.info("Discovered %d followed profiles on %s", len(profiles), platform)
+    return profiles
+
+
+def _discover_twitter_following(driver: webdriver.Chrome,
+                                scroll_count: int) -> list[dict]:
+    # First get our own screen name
+    driver.get("https://x.com/home")
+    time.sleep(3)
+
+    # Navigate to following page via the profile link
+    try:
+        # Try to find the profile link to get username
+        profile_links = driver.find_elements(
+            By.CSS_SELECTOR, 'a[data-testid="AppTabBar_Profile_Link"]')
+        if profile_links:
+            href = profile_links[0].get_attribute("href")  # https://x.com/username
+            username = href.rstrip("/").split("/")[-1]
+        else:
+            # Fallback: look at any link that looks like a profile
+            username = driver.execute_script(
+                "return document.querySelector('[data-testid=\"UserName\"] a')?.href?.split('/').pop()")
+            if not username:
+                log.error("Could not determine Twitter username")
+                return []
+    except Exception:
+        log.error("Could not determine Twitter username")
+        return []
+
+    driver.get(f"https://x.com/{username}/following")
+    time.sleep(3)
+
+    seen = set()
+    profiles = []
+    for _ in range(scroll_count):
+        links = driver.find_elements(By.CSS_SELECTOR,
+            'div[data-testid="UserCell"] a[role="link"]')
+        for link in links:
+            href = link.get_attribute("href") or ""
+            # Filter to profile links like https://x.com/username (no /following etc)
+            parts = href.rstrip("/").split("/")
+            if len(parts) == 4 and parts[2] == "x.com":
+                name = parts[3]
+                if name not in seen and name != username:
+                    seen.add(name)
+                    profiles.append({
+                        "platform": "twitter",
+                        "url": f"https://x.com/{name}/media"
+                    })
+        driver.execute_script("window.scrollBy(0, window.innerHeight);")
+        time.sleep(1.5)
+
+    return profiles
+
+
+def _discover_linkedin_following(driver: webdriver.Chrome,
+                                 scroll_count: int) -> list[dict]:
+    driver.get("https://www.linkedin.com/mynetwork/network-manager/people-follow/following/")
+    time.sleep(3)
+
+    seen = set()
+    profiles = []
+    for _ in range(scroll_count):
+        links = driver.find_elements(By.CSS_SELECTOR,
+            'a.mn-connection-card__link, a.ember-view[href*="/in/"]')
+        for link in links:
+            href = link.get_attribute("href") or ""
+            if "/in/" in href:
+                # Normalize to just the profile slug
+                slug = href.split("/in/")[1].rstrip("/").split("?")[0]
+                if slug and slug not in seen:
+                    seen.add(slug)
+                    profiles.append({
+                        "platform": "linkedin",
+                        "url": f"https://www.linkedin.com/in/{slug}/recent-activity/shares/"
+                    })
+        driver.execute_script("window.scrollBy(0, window.innerHeight);")
+        time.sleep(1.5)
+
+    return profiles
+
+
 def _guess_ext(content_type: str, url: str) -> str:
     ct_map = {"image/png": ".png", "image/jpeg": ".jpg",
               "image/webp": ".webp", "image/gif": ".gif"}

@@ -6,7 +6,7 @@ import argparse
 from pathlib import Path
 from PIL import Image
 
-from scraper import scrape_profile
+from scraper import scrape_profile, discover_following
 from analyze import analyze
 from sorter import sort_path
 from resize import process
@@ -53,13 +53,29 @@ def _analyze_and_sort(fpath: Path, out_dir: Path, cfg: dict,
 
 
 def run(cfg: dict, full_rescan: bool = False,
-        invert_threshold: float | None = None):
+        invert_threshold: float | None = None,
+        discover: str | None = None):
     out_dir = Path(cfg["output_dir"])
     raw_dir = out_dir / "_raw"
     tracker = ProgressTracker()
 
+    profiles = list(cfg["profiles"])
+
+    # Auto-discover followed profiles
+    if discover:
+        for platform in discover.split(","):
+            platform = platform.strip()
+            discovered = discover_following(
+                platform,
+                headless=cfg.get("headless", True),
+                cookie_file=cfg.get("cookie_file"),
+                browser=cfg.get("browser"),
+                scroll_count=cfg.get("scroll_count", 5),
+            )
+            profiles.extend(discovered)
+
     all_files = []
-    for profile in cfg["profiles"]:
+    for profile in profiles:
         platform = profile["platform"]
         url = profile["url"]
         slug = url.rstrip("/").split("/")[-1] or platform
@@ -129,6 +145,8 @@ def main():
                         help="Delete original files after processing")
     parser.add_argument("--full-rescan", action="store_true",
                         help="Ignore progress and re-download everything")
+    parser.add_argument("--discover", metavar="PLATFORM",
+                        help="Auto-discover followed profiles (twitter,linkedin)")
     parser.add_argument("--invert-bright", nargs="?", type=float,
                         const=0.70, default=None, metavar="THRESHOLD",
                         help="Invert colors on bright images (default threshold: 0.70)")
@@ -143,7 +161,8 @@ def main():
                       invert_threshold=args.invert_bright)
     else:
         run(cfg, full_rescan=args.full_rescan,
-            invert_threshold=args.invert_bright)
+            invert_threshold=args.invert_bright,
+            discover=args.discover)
 
 
 if __name__ == "__main__":
