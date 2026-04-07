@@ -1,0 +1,56 @@
+# LinkedIn thought leaders known for posting infographics
+# AI / Machine Learning / GenAI
+# ─────────────────────────────
+linkedin @yaborousseau          # Yann LeCun — Meta Chief AI Scientist
+linkedin @andrew-ng-3a0a15      # Andrew Ng — DeepLearning.AI, Coursera
+linkedin @chiphuyen              # Chip Huyen — AI infra, MLOps visuals
+linkedin @sarahguo1              # Sarah Guo — AI investor, visual breakdowns
+linkedin @pascalbornet           # Pascal Bornet — AI/automation infographics king
+linkedin @bernardmarr            # Bernard Marr — tech trends, visual explainers
+linkedin @kaifulee               # Kai-Fu Lee — AI thought leader
+linkedin @ravikumaraiml          # Ravi Kumar — AI/ML visual summaries
+linkedin @daboross               # Daliana Liu — data science infographics
+linkedin @louisbouchard          # Louis Bouchard — AI explained visually
+
+# Project Management / Agile / Leadership
+# ────────────────────────────────────────
+linkedin @ricardovargas          # Ricardo Vargas — PM legend, visual frameworks
+linkedin @aborovcanin            # Antonio Nieto-Rodriguez — project economy visuals
+linkedin @susannemadsen          # Susanne Madsen — PM leadership infographics
+linkedin @henrikjkniberg         # Henrik Kniberg — agile/lean visual thinker
+linkedin @mike-clayton-speaker   # Mike Clayton — PM visual explainers
+linkedin @johncutlefish          # John Cutler — product/agile visual essays
+
+# Sovereign European Cloud / Digital Sovereignty
+# ───────────────────────────────────────────────
+linkedin @ythierry               # Yann Lechelle — Scaleway, EU cloud advocate
+linkedin @octabornet             # Octave Klaba — OVHcloud founder
+linkedin @boris-otto-2a5b3a     # Boris Otto — GAIA-X, EU data sovereignty
+linkedin @andrea-vaugan          # Andrea Vaugan — EU digital policy
+linkedin @lucianafloridiphd      # Luciana Floridi — digital ethics/EU tech policy
+
+# European Politics / Policy / Geopolitics
+# ─────────────────────────────────────────
+linkedin @guyelster              # Guy Verhofstadt — EU Parliament, visual posts
+linkedin @maraborrell            # Margrethe Vestager — EU competition/digital
+linkedin @thaborrell             # Thierry Breton — EU internal market
+linkedin @nicolascollin          # Nicolas Colin — EU tech policy, The Family
+linkedin @bruaborrell            # Bruno Le Maire — French economy/EU policy
+
+# Cybersecurity
+# ─────────────
+linkedin @bruceschneier          # Bruce Schneier — security visuals
+linkedin @thegrugq               # The Grugq — infosec visual breakdowns
+linkedin @troyhunt               # Troy Hunt — Have I Been Pwned, security visuals
+linkedin @yourskysec             # Stéphane Nappo — CISO, cybersec infographics
+linkedin @yourskysec2            # Mikko Hyppönen — WithSecure, threat visuals
+linkedin @danielmiessler         # Daniel Miessler — security frameworks
+linkedin @kimcrawley             # Kim Crawley — cybersec writer, visual content
+
+# ITSM / ITIL / Service Management
+# ─────────────────────────────────
+linkedin @stuartrance             # Stuart Rance — ITIL author, SM visuals
+linkedin @robengland              # Rob England — IT Skeptic, ITSM infographics
+linkedin @claireagutter           # Claire Agutter — ITIL/VeriSM visual educator
+linkedin @marksmalley             # Mark Smalley — IT service management visuals
+linkedin @kaaborrell              # Katrina Macdermid — ITSM visual thinker

@@ -3,6 +3,7 @@
 import json
 import logging
 import argparse
+import time
 from pathlib import Path
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from PIL import Image
@@ -108,6 +109,12 @@ def _scrape_one(profile: dict, cfg: dict, raw_dir: Path,
         full_rescan=full_rescan,
     )
     log.info("Downloaded %d new images from %s", len(files), url)
+
+    # Throttle between profiles to avoid bans
+    delay = 5 + (len(files) * 0.5)  # more files = longer cooldown
+    log.info("⏸ Cooling down %.0fs before next profile", delay)
+    time.sleep(delay)
+
     return files
 
 
@@ -230,6 +237,37 @@ def _parse_limits(val: str) -> dict[str, float]:
     return limits
 
 
+def _load_profile_lists(paths: list[str]) -> list[dict]:
+    """Load profiles from one or more .txt files.
+
+    Format per line:
+        platform url           # e.g. "linkedin https://www.linkedin.com/in/someone/recent-activity/shares/"
+        platform @handle       # e.g. "twitter @someone" (auto-expands to media URL)
+    Lines starting with # are comments. Blank lines are skipped.
+    """
+    profiles = []
+    for path in paths:
+        with open(path) as f:
+            for line in f:
+                line = line.strip()
+                if not line or line.startswith("#"):
+                    continue
+                parts = line.split(None, 1)
+                if len(parts) != 2:
+                    continue
+                platform, target = parts[0].lower(), parts[1].strip()
+                # Expand shorthand handles
+                if target.startswith("@"):
+                    handle = target.lstrip("@")
+                    if platform == "twitter":
+                        target = f"https://x.com/{handle}/media"
+                    elif platform == "linkedin":
+                        target = f"https://www.linkedin.com/in/{handle}/recent-activity/shares/"
+                profiles.append({"platform": platform, "url": target})
+    log.info("Loaded %d profiles from %d file(s)", len(profiles), len(paths))
+    return profiles
+
+
 def main():
     parser = argparse.ArgumentParser(
         description="Infographic downloader & organizer")
@@ -253,11 +291,15 @@ def main():
                              "(e.g. '30' for both, or 'vertical:30,horizontal:30')")
     parser.add_argument("-w", "--workers", type=int, default=4,
                         help="Parallel scraping workers (default: 4)")
+    parser.add_argument("-p", "--profiles", nargs="+", metavar="FILE",
+                        help="Profile list file(s) to load")
     args = parser.parse_args()
 
     cfg = load_config(args.config)
     if args.output:
         cfg["output_dir"] = args.output
+    if args.profiles:
+        cfg.setdefault("profiles", []).extend(_load_profile_lists(args.profiles))
 
     limits = _parse_limits(args.max_storage) if args.max_storage else None
 
