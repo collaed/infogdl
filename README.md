@@ -85,6 +85,8 @@ python infogdl.py --full-rescan
 | `--full-rescan` | Ignore progress tracker, re-download everything |
 | `--discover PLATFORM` | Auto-discover followed profiles (`twitter`, `linkedin`, or both) |
 | `--invert-bright [T]` | Invert colors on bright images (default threshold: 0.70) |
+| `--max-storage LIMIT` | Stop at storage limit in GB (`30` for both, or `vertical:30,horizontal:30`) |
+| `-w`, `--workers` | Parallel scraping workers (default: 4) |
 
 ## Configuration
 

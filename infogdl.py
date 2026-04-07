@@ -4,6 +4,7 @@ import json
 import logging
 import argparse
 from pathlib import Path
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from PIL import Image
 
 from scraper import scrape_profile, discover_following
@@ -21,17 +22,46 @@ def load_config(path: str) -> dict:
         return json.load(f)
 
 
+def _dir_size_gb(path: Path) -> float:
+    """Total size of all files under path, in GB."""
+    if not path.exists():
+        return 0.0
+    return sum(f.stat().st_size for f in path.rglob("*") if f.is_file()) / (1024**3)
+
+
+def _check_limits(out_dir: Path, limits: dict[str, float]) -> dict[str, bool]:
+    """Check which orientations have hit their storage limit.
+    Returns {orientation: is_full}."""
+    result = {}
+    for orient, max_gb in limits.items():
+        size = _dir_size_gb(out_dir / orient)
+        result[orient] = size >= max_gb
+        if result[orient]:
+            log.info("Storage limit reached for %s: %.2f/%.1f GB", orient, size, max_gb)
+    return result
+
+
 def _analyze_and_sort(fpath: Path, out_dir: Path, cfg: dict,
                       delete: bool = False,
-                      invert_threshold: float | None = None):
-    """Analyze, sort, crop, resize, and compress a single image."""
+                      invert_threshold: float | None = None,
+                      limits: dict[str, float] | None = None) -> str | None:
+    """Analyze, sort, crop, resize, and compress a single image.
+    Returns orientation or None if skipped due to limit."""
     try:
         img = Image.open(fpath)
     except Exception as e:
         log.warning("Cannot open %s: %s", fpath, e)
-        return
+        return None
 
     info = analyze(img)
+
+    # Check storage limit before writing
+    if limits:
+        full = _check_limits(out_dir, limits)
+        if full.get(info["orientation"], False):
+            img.close()
+            return None
+
     subfolder = sort_path(
         info["orientation"], info["colors"], info["fill_rate"],
         cfg["color_bins"], cfg["fill_bins"],
@@ -50,60 +80,109 @@ def _analyze_and_sort(fpath: Path, out_dir: Path, cfg: dict,
         log.info("%s -> %s/ (colors=%d, fill=%.2f, %s)",
                  fpath.name, subfolder, info["colors"],
                  info["fill_rate"], info["orientation"])
+    return info["orientation"]
+
+
+def _scrape_one(profile: dict, cfg: dict, raw_dir: Path,
+                tracker: ProgressTracker, full_rescan: bool) -> list[Path]:
+    """Scrape a single profile. Designed to run in a thread."""
+    platform = profile["platform"]
+    url = profile["url"]
+    slug = url.rstrip("/").split("/")[-1] or platform
+    dl_dir = raw_dir / f"{platform}_{slug}"
+
+    last_ts = tracker.get_last_ts(f"{platform}:{url.rstrip('/')}")
+    if last_ts and not full_rescan:
+        log.info("Resuming %s from last checkpoint", url)
+    else:
+        log.info("Full scan of %s", url)
+
+    files = scrape_profile(
+        platform, url, dl_dir,
+        headless=cfg.get("headless", True),
+        scroll_count=cfg.get("scroll_count", 5),
+        scroll_delay=cfg.get("scroll_delay", 2.0),
+        cookie_file=cfg.get("cookie_file"),
+        browser=cfg.get("browser"),
+        tracker=tracker,
+        full_rescan=full_rescan,
+    )
+    log.info("Downloaded %d new images from %s", len(files), url)
+    return files
 
 
 def run(cfg: dict, full_rescan: bool = False,
         invert_threshold: float | None = None,
-        discover: str | None = None):
+        discover: str | None = None,
+        limits: dict[str, float] | None = None,
+        workers: int = 4):
     out_dir = Path(cfg["output_dir"])
     raw_dir = out_dir / "_raw"
     tracker = ProgressTracker()
 
-    profiles = list(cfg["profiles"])
+    profiles = list(cfg.get("profiles", []))
 
-    # Auto-discover followed profiles
+    # Auto-discover followed profiles (parallel per platform)
     if discover:
-        for platform in discover.split(","):
-            platform = platform.strip()
-            discovered = discover_following(
-                platform,
-                headless=cfg.get("headless", True),
-                cookie_file=cfg.get("cookie_file"),
-                browser=cfg.get("browser"),
-                scroll_count=cfg.get("scroll_count", 5),
-            )
-            profiles.extend(discovered)
+        platforms = [p.strip() for p in discover.split(",")]
+        with ThreadPoolExecutor(max_workers=len(platforms)) as pool:
+            futures = {
+                pool.submit(
+                    discover_following, p,
+                    headless=cfg.get("headless", True),
+                    cookie_file=cfg.get("cookie_file"),
+                    browser=cfg.get("browser"),
+                    scroll_count=cfg.get("scroll_count", 5),
+                ): p for p in platforms
+            }
+            for fut in as_completed(futures):
+                plat = futures[fut]
+                try:
+                    profiles.extend(fut.result())
+                except Exception as e:
+                    log.error("Discovery failed for %s: %s", plat, e)
 
+    if not profiles:
+        log.warning("No profiles to scrape.")
+        tracker.close()
+        return
+
+    log.info("Scraping %d profiles with %d parallel workers", len(profiles), workers)
+
+    # Scrape all profiles in parallel
     all_files = []
-    for profile in profiles:
-        platform = profile["platform"]
-        url = profile["url"]
-        slug = url.rstrip("/").split("/")[-1] or platform
-        dl_dir = raw_dir / f"{platform}_{slug}"
+    with ThreadPoolExecutor(max_workers=workers) as pool:
+        futures = {
+            pool.submit(_scrape_one, p, cfg, raw_dir, tracker, full_rescan): p
+            for p in profiles
+        }
+        for fut in as_completed(futures):
+            try:
+                all_files.extend(fut.result())
+            except Exception as e:
+                p = futures[fut]
+                log.error("Scrape failed for %s: %s", p.get("url", "?"), e)
 
-        last_ts = tracker.get_last_ts(f"{platform}:{url.rstrip('/')}")
-        if last_ts and not full_rescan:
-            log.info("Resuming %s from last checkpoint", url)
-        else:
-            log.info("Full scan of %s", url)
-
-        files = scrape_profile(
-            platform, url, dl_dir,
-            headless=cfg.get("headless", True),
-            scroll_count=cfg.get("scroll_count", 5),
-            scroll_delay=cfg.get("scroll_delay", 2.0),
-            cookie_file=cfg.get("cookie_file"),
-            browser=cfg.get("browser"),
-            tracker=tracker,
-            full_rescan=full_rescan,
-        )
-        all_files.extend(files)
-        log.info("Downloaded %d new images from %s", len(files), url)
-
+    # Process images (check limits after each)
+    processed = {"vertical": 0, "horizontal": 0}
+    skipped = 0
     for fpath in all_files:
-        _analyze_and_sort(fpath, out_dir, cfg,
-                          invert_threshold=invert_threshold)
+        # Early exit if both orientations are full
+        if limits:
+            full = _check_limits(out_dir, limits)
+            if all(full.values()):
+                log.info("All storage limits reached. Stopping.")
+                break
 
+        orient = _analyze_and_sort(fpath, out_dir, cfg,
+                                   invert_threshold=invert_threshold,
+                                   limits=limits)
+        if orient:
+            processed[orient] = processed.get(orient, 0) + 1
+        else:
+            skipped += 1
+
+    log.info("Done. Processed: %s. Skipped (limit): %d", processed, skipped)
     tracker.close()
 
 
@@ -117,7 +196,8 @@ def collect_images(root: Path) -> list[Path]:
 
 def process_local(cfg: dict, input_dir: str, output_dir: str | None,
                   delete: bool = False,
-                  invert_threshold: float | None = None):
+                  invert_threshold: float | None = None,
+                  limits: dict[str, float] | None = None):
     out_dir = Path(output_dir) if output_dir else Path(cfg["output_dir"])
     src = Path(input_dir)
     if not src.is_dir():
@@ -128,8 +208,26 @@ def process_local(cfg: dict, input_dir: str, output_dir: str | None,
     log.info("Found %d images in %s", len(files), src)
 
     for fpath in files:
+        if limits:
+            full = _check_limits(out_dir, limits)
+            if all(full.values()):
+                log.info("All storage limits reached. Stopping.")
+                break
         _analyze_and_sort(fpath, out_dir, cfg, delete=delete,
-                          invert_threshold=invert_threshold)
+                          invert_threshold=invert_threshold, limits=limits)
+
+
+def _parse_limits(val: str) -> dict[str, float]:
+    """Parse 'vertical:30,horizontal:30' or just '30' (both)."""
+    limits = {}
+    for part in val.split(","):
+        if ":" in part:
+            orient, gb = part.split(":", 1)
+            limits[orient.strip()] = float(gb)
+        else:
+            gb = float(part)
+            limits = {"vertical": gb, "horizontal": gb}
+    return limits
 
 
 def main():
@@ -150,19 +248,27 @@ def main():
     parser.add_argument("--invert-bright", nargs="?", type=float,
                         const=0.70, default=None, metavar="THRESHOLD",
                         help="Invert colors on bright images (default threshold: 0.70)")
+    parser.add_argument("--max-storage", metavar="LIMIT",
+                        help="Stop when output reaches limit in GB "
+                             "(e.g. '30' for both, or 'vertical:30,horizontal:30')")
+    parser.add_argument("-w", "--workers", type=int, default=4,
+                        help="Parallel scraping workers (default: 4)")
     args = parser.parse_args()
 
     cfg = load_config(args.config)
     if args.output:
         cfg["output_dir"] = args.output
 
+    limits = _parse_limits(args.max_storage) if args.max_storage else None
+
     if args.input:
         process_local(cfg, args.input, args.output, delete=args.delete,
-                      invert_threshold=args.invert_bright)
+                      invert_threshold=args.invert_bright, limits=limits)
     else:
         run(cfg, full_rescan=args.full_rescan,
             invert_threshold=args.invert_bright,
-            discover=args.discover)
+            discover=args.discover, limits=limits,
+            workers=args.workers)
 
 
 if __name__ == "__main__":
