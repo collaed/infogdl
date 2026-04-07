@@ -273,8 +273,9 @@ def _load_profile_lists(paths: list[str]) -> list[dict]:
     for path in paths:
         with open(path) as f:
             for line in f:
-                line = line.strip()
-                if not line or line.startswith("#"):
+                # Strip inline comments
+                line = line.split("#")[0].strip()
+                if not line:
                     continue
                 parts = line.split(None, 1)
                 if len(parts) != 2:

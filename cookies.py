@@ -187,23 +187,43 @@ def _find_newest(root: str, filename: str) -> str | None:
 
 
 class _safe_sqlite:
-    """Context manager that opens SQLite DB read-only, copying if locked."""
+    """Context manager that opens SQLite DB read-only, copying if locked.
+    On Windows, always copies first since browsers hold exclusive locks."""
 
     def __init__(self, path: str):
         self.path = path
         self.tmpdir = None
         self.conn = None
 
+    def _open_copy(self) -> sqlite3.Connection:
+        self.tmpdir = tempfile.TemporaryDirectory(prefix="infogdl-")
+        copy = os.path.join(self.tmpdir.name, "cookies.sqlite")
+        # On Windows, use raw file read to bypass locks
+        if sys.platform in ("win32", "cygwin"):
+            try:
+                with open(self.path, "rb") as src, open(copy, "wb") as dst:
+                    dst.write(src.read())
+            except PermissionError:
+                # Last resort: use system copy which may handle locks better
+                import subprocess
+                subprocess.run(["cmd", "/c", "copy", "/y",
+                                self.path, copy],
+                               capture_output=True, timeout=10)
+        else:
+            shutil.copy2(self.path, copy)
+        return sqlite3.connect(copy, timeout=5)
+
     def __enter__(self) -> sqlite3.Connection:
+        # On Windows, always copy first — browsers hold exclusive locks
+        if sys.platform in ("win32", "cygwin"):
+            self.conn = self._open_copy()
+            return self.conn
         try:
             uri = f"file:{self.path}?mode=ro&immutable=1"
             self.conn = sqlite3.connect(uri, uri=True, timeout=5)
             return self.conn
         except sqlite3.OperationalError:
-            self.tmpdir = tempfile.TemporaryDirectory(prefix="infogdl-")
-            copy = os.path.join(self.tmpdir.name, "cookies.sqlite")
-            shutil.copy2(self.path, copy)
-            self.conn = sqlite3.connect(copy, timeout=5)
+            self.conn = self._open_copy()
             return self.conn
 
     def __exit__(self, *exc):
