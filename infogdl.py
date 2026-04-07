@@ -107,16 +107,21 @@ def _scrape_one(profile: dict, cfg: dict, raw_dir: Path,
     else:
         log.info("Full scan of %s", url)
 
-    files = scrape_profile(
-        platform, url, dl_dir,
-        headless=cfg.get("headless", True),
-        scroll_count=cfg.get("scroll_count", 5),
-        scroll_delay=cfg.get("scroll_delay", 2.0),
-        cookie_file=cfg.get("cookie_file"),
-        browser=cfg.get("browser"),
-        tracker=tracker,
-        full_rescan=full_rescan,
-    )
+    try:
+        files = scrape_profile(
+            platform, url, dl_dir,
+            headless=cfg.get("headless", True),
+            scroll_count=cfg.get("scroll_count", 5),
+            scroll_delay=cfg.get("scroll_delay", 2.0),
+            cookie_file=cfg.get("cookie_file"),
+            browser=cfg.get("browser"),
+            tracker=tracker,
+            full_rescan=full_rescan,
+        )
+    except Exception as e:
+        log.error("Scrape failed for %s: %s", url, e)
+        files = []
+
     log.info("Downloaded %d new images from %s", len(files), url)
 
     # Throttle between profiles — gallery-dl style escalating cooldown

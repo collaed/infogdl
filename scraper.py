@@ -157,10 +157,10 @@ def _scroll_and_collect(driver: webdriver.Chrome, url: str,
         new_this_scroll = 0
 
         for img in all_imgs:
-            src = img.get_attribute("src") or ""
-            if not src.startswith("http") or src in seen:
-                continue
             try:
+                src = img.get_attribute("src") or ""
+                if not src.startswith("http") or src in seen:
+                    continue
                 nat_w = driver.execute_script("return arguments[0].naturalWidth", img)
                 nat_h = driver.execute_script("return arguments[0].naturalHeight", img)
             except Exception:
