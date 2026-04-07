@@ -213,7 +213,8 @@ def scrape_profile(platform: str, url: str, download_dir: Path,
             except requests.exceptions.HTTPError as e:
                 if e.response and e.response.status_code == 429:
                     wait = int(e.response.headers.get("Retry-After", 60))
-                    log.warning("Rate limited. Waiting %ds...", wait)
+                    log.warning("⏳ Rate limited by %s — backing off %ds to avoid ban",
+                                platform, wait)
                     time.sleep(wait)
                     try:
                         resp = session.get(img_url, timeout=15)
@@ -221,6 +222,10 @@ def scrape_profile(platform: str, url: str, download_dir: Path,
                     except Exception:
                         log.warning("Failed after rate limit wait: %s", img_url)
                         continue
+                elif e.response and e.response.status_code in (401, 403):
+                    log.warning("⛔ %s blocked access (HTTP %d) — stopping this profile",
+                                platform, e.response.status_code)
+                    break
                 else:
                     log.warning("Failed to download %s: %s", img_url, e)
                     continue
@@ -232,6 +237,9 @@ def scrape_profile(platform: str, url: str, download_dir: Path,
             fname = download_dir / f"img_{i:04d}{ext}"
             fname.write_bytes(resp.content)
             downloaded.append(fname)
+            size_kb = len(resp.content) / 1024
+            log.info("📥 [%s] %d/%d  %s  (%.0f KB)",
+                     platform, i + 1, len(items), fname.name, size_kb)
 
             if tracker:
                 tracker.record(pkey, img_url, item["ts"])
