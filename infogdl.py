@@ -22,7 +22,8 @@ def load_config(path: str) -> dict:
 
 
 def _analyze_and_sort(fpath: Path, out_dir: Path, cfg: dict,
-                      delete: bool = False):
+                      delete: bool = False,
+                      invert_threshold: float | None = None):
     """Analyze, sort, crop, resize, and compress a single image."""
     try:
         img = Image.open(fpath)
@@ -38,7 +39,8 @@ def _analyze_and_sort(fpath: Path, out_dir: Path, cfg: dict,
     dest_dir = out_dir / subfolder
     dest_dir.mkdir(parents=True, exist_ok=True)
     process(img, dest_dir / fpath.name,
-            cfg["target_width"], cfg["target_height"], cfg["max_file_size_kb"])
+            cfg["target_width"], cfg["target_height"], cfg["max_file_size_kb"],
+            invert_threshold=invert_threshold)
     img.close()
 
     if delete:
@@ -50,7 +52,8 @@ def _analyze_and_sort(fpath: Path, out_dir: Path, cfg: dict,
                  info["fill_rate"], info["orientation"])
 
 
-def run(cfg: dict, full_rescan: bool = False):
+def run(cfg: dict, full_rescan: bool = False,
+        invert_threshold: float | None = None):
     out_dir = Path(cfg["output_dir"])
     raw_dir = out_dir / "_raw"
     tracker = ProgressTracker()
@@ -82,7 +85,8 @@ def run(cfg: dict, full_rescan: bool = False):
         log.info("Downloaded %d new images from %s", len(files), url)
 
     for fpath in all_files:
-        _analyze_and_sort(fpath, out_dir, cfg)
+        _analyze_and_sort(fpath, out_dir, cfg,
+                          invert_threshold=invert_threshold)
 
     tracker.close()
 
@@ -96,7 +100,8 @@ def collect_images(root: Path) -> list[Path]:
 
 
 def process_local(cfg: dict, input_dir: str, output_dir: str | None,
-                  delete: bool = False):
+                  delete: bool = False,
+                  invert_threshold: float | None = None):
     out_dir = Path(output_dir) if output_dir else Path(cfg["output_dir"])
     src = Path(input_dir)
     if not src.is_dir():
@@ -107,7 +112,8 @@ def process_local(cfg: dict, input_dir: str, output_dir: str | None,
     log.info("Found %d images in %s", len(files), src)
 
     for fpath in files:
-        _analyze_and_sort(fpath, out_dir, cfg, delete=delete)
+        _analyze_and_sort(fpath, out_dir, cfg, delete=delete,
+                          invert_threshold=invert_threshold)
 
 
 def main():
@@ -123,6 +129,9 @@ def main():
                         help="Delete original files after processing")
     parser.add_argument("--full-rescan", action="store_true",
                         help="Ignore progress and re-download everything")
+    parser.add_argument("--invert-bright", nargs="?", type=float,
+                        const=0.70, default=None, metavar="THRESHOLD",
+                        help="Invert colors on bright images (default threshold: 0.70)")
     args = parser.parse_args()
 
     cfg = load_config(args.config)
@@ -130,9 +139,11 @@ def main():
         cfg["output_dir"] = args.output
 
     if args.input:
-        process_local(cfg, args.input, args.output, delete=args.delete)
+        process_local(cfg, args.input, args.output, delete=args.delete,
+                      invert_threshold=args.invert_bright)
     else:
-        run(cfg, full_rescan=args.full_rescan)
+        run(cfg, full_rescan=args.full_rescan,
+            invert_threshold=args.invert_bright)
 
 
 if __name__ == "__main__":

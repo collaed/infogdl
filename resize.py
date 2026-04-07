@@ -81,8 +81,22 @@ def compress_if_needed(img: Image.Image, path: Path, max_kb: int = 500) -> None:
     img.convert("RGB").save(path, format="JPEG", quality=30, optimize=True)
 
 
-def process(img: Image.Image, out_path: Path, tw: int = 1920, th: int = 1080, max_kb: int = 500) -> Path:
+def invert_if_bright(img: Image.Image, threshold: float = 0.70) -> tuple[Image.Image, bool]:
+    """Invert colors if average brightness exceeds threshold (0-1 scale).
+    Returns (image, was_inverted)."""
+    gray = np.array(img.convert("L"), dtype=np.float32)
+    brightness = gray.mean() / 255.0
+    if brightness > threshold:
+        from PIL import ImageOps
+        return ImageOps.invert(img.convert("RGB")), True
+    return img, False
+
+
+def process(img: Image.Image, out_path: Path, tw: int = 1920, th: int = 1080,
+            max_kb: int = 500, invert_threshold: float | None = None) -> Path:
     cropped = crop_to_content(img, border=1)
     resized = resize_to_fill_dimension(cropped, tw, th)
+    if invert_threshold is not None:
+        resized, _ = invert_if_bright(resized, invert_threshold)
     compress_if_needed(resized, out_path, max_kb)
     return out_path
