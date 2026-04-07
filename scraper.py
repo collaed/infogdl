@@ -285,49 +285,74 @@ def discover_following(platform: str, headless: bool = True,
 
 def _discover_twitter_following(driver: webdriver.Chrome,
                                 scroll_count: int) -> list[dict]:
-    # First get our own screen name
-    driver.get("https://x.com/home")
+    # Get username: navigate to profile settings which redirects to /username
+    driver.get("https://x.com/settings/profile")
     time.sleep(3)
 
-    # Navigate to following page via the profile link
-    try:
-        # Try to find the profile link to get username
-        profile_links = driver.find_elements(
-            By.CSS_SELECTOR, 'a[data-testid="AppTabBar_Profile_Link"]')
-        if profile_links:
-            href = profile_links[0].get_attribute("href")  # https://x.com/username
-            username = href.rstrip("/").split("/")[-1]
-        else:
-            # Fallback: look at any link that looks like a profile
-            username = driver.execute_script(
-                "return document.querySelector('[data-testid=\"UserName\"] a')?.href?.split('/').pop()")
-            if not username:
-                log.error("Could not determine Twitter username")
-                return []
-    except Exception:
-        log.error("Could not determine Twitter username")
+    username = None
+    # Method 1: extract from current URL after redirect
+    for _ in range(5):
+        url = driver.current_url
+        # Settings page URL contains username in some cases, or check page source
+        username = driver.execute_script("""
+            // Try multiple known locations for screen_name
+            var el = document.querySelector('a[href$="/following"]');
+            if (el) return el.href.split('/').slice(-2)[0];
+            el = document.querySelector('a[data-testid="AppTabBar_Profile_Link"]');
+            if (el) return el.href.split('/').pop();
+            // Try the <link rel="canonical"> or meta tags
+            var links = document.querySelectorAll('link[rel="canonical"]');
+            for (var l of links) { var m = l.href.match(/x\\.com\\/([^/]+)/); if (m) return m[1]; }
+            return null;
+        """)
+        if username:
+            break
+        time.sleep(1)
+
+    # Method 2: go to /home and scrape from sidebar
+    if not username:
+        driver.get("https://x.com/home")
+        time.sleep(3)
+        username = driver.execute_script("""
+            // Sidebar nav profile link
+            var links = document.querySelectorAll('nav a[href]');
+            for (var a of links) {
+                var m = a.href.match(/x\\.com\\/([A-Za-z0-9_]+)$/);
+                if (m && !['home','explore','notifications','messages','settings','i'].includes(m[1]))
+                    return m[1];
+            }
+            return null;
+        """)
+
+    if not username:
+        log.error("Could not determine Twitter username. Are you logged in to Firefox?")
         return []
 
+    log.info("Discovered Twitter username: %s", username)
     driver.get(f"https://x.com/{username}/following")
     time.sleep(3)
 
     seen = set()
     profiles = []
     for _ in range(scroll_count):
-        links = driver.find_elements(By.CSS_SELECTOR,
-            'div[data-testid="UserCell"] a[role="link"]')
-        for link in links:
-            href = link.get_attribute("href") or ""
-            # Filter to profile links like https://x.com/username (no /following etc)
-            parts = href.rstrip("/").split("/")
-            if len(parts) == 4 and parts[2] == "x.com":
-                name = parts[3]
-                if name not in seen and name != username:
-                    seen.add(name)
-                    profiles.append({
-                        "platform": "twitter",
-                        "url": f"https://x.com/{name}/media"
-                    })
+        # Collect all user profile links on the page
+        hrefs = driver.execute_script("""
+            var urls = new Set();
+            document.querySelectorAll('a[href]').forEach(function(a) {
+                var m = a.href.match(/^https:\\/\\/x\\.com\\/([A-Za-z0-9_]+)$/);
+                if (m) urls.add(m[1]);
+            });
+            return Array.from(urls);
+        """)
+        skip = {username, "home", "explore", "notifications", "messages",
+                "settings", "i", "search", "compose", "tos", "privacy"}
+        for name in hrefs:
+            if name not in seen and name.lower() not in skip:
+                seen.add(name)
+                profiles.append({
+                    "platform": "twitter",
+                    "url": f"https://x.com/{name}/media"
+                })
         driver.execute_script("window.scrollBy(0, window.innerHeight);")
         time.sleep(1.5)
 
