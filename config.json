@@ -5,7 +5,7 @@
     "target_height": 1080,
     "max_file_size_kb": 500,
     "cookie_file": null,
-    "browser": "chrome",
+    "browser": "firefox",
     "color_bins": {
         "low": [0, 5],
         "medium": [6, 15],

@@ -43,7 +43,6 @@ def _get_cookies(platform: str, cookie_file: str | None = None,
                  browser: str | None = None) -> dict[str, str]:
     """Get cookies with caching across runs.
     Falls back to gallery-dl config if no explicit source given."""
-    domain = "linkedin.com" if platform == "linkedin" else "twitter.com"
 
     # If no explicit source, try gallery-dl config
     if not cookie_file and not browser:
@@ -68,7 +67,15 @@ def _get_cookies(platform: str, cookie_file: str | None = None,
         except Exception:
             pass
 
-    cookies = load_cookies(domain, cookie_file=cookie_file, browser=browser)
+    # Twitter rebranded to x.com — try both domains
+    if platform == "twitter":
+        cookies = load_cookies("x.com", cookie_file=cookie_file, browser=browser)
+        if not cookies:
+            cookies = load_cookies("twitter.com", cookie_file=cookie_file, browser=browser)
+    else:
+        domain = "linkedin.com" if platform == "linkedin" else platform
+        cookies = load_cookies(domain, cookie_file=cookie_file, browser=browser)
+
     if cookies:
         _cache_session(platform, cookies)
     return cookies

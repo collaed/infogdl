@@ -157,16 +157,13 @@ class TwitterAPI:
 
             # Navigate the response tree
             try:
-                instructions = (data["data"]["user"]["result"]["timeline_v2"]
-                                ["timeline"]["instructions"])
+                result = data["data"]["user"]["result"]
+                tl = (result.get("timeline_v2") or result.get("timeline", {}))
+                instructions = tl["timeline"]["instructions"]
             except (KeyError, TypeError):
-                try:
-                    instructions = (data["data"]["user"]["result"]["timeline"]
-                                    ["timeline"]["instructions"])
-                except (KeyError, TypeError):
-                    log.debug("Unexpected API response structure: %s",
-                              json.dumps(data)[:500])
-                    break
+                log.debug("Unexpected API response structure: %s",
+                          json.dumps(data)[:500])
+                break
 
             entries = []
             next_cursor = None
@@ -187,7 +184,25 @@ class TwitterAPI:
                                    .get("value"))
                     continue
 
-                # Extract tweet from various nesting patterns
+                # Grid entries contain multiple tweets
+                if eid.startswith("profile-grid-"):
+                    items = entry.get("content", {}).get("items", [])
+                    for item in items:
+                        tweet = _extract_tweet(item)
+                        if tweet:
+                            media_urls = _extract_media_urls(tweet)
+                            if media_urls:
+                                tweet_id = tweet.get("rest_id", "")
+                                for url in media_urls:
+                                    all_media.append({
+                                        "url": url,
+                                        "tweet_id": tweet_id,
+                                        "ts": time.time(),
+                                    })
+                                tweets_found += 1
+                    continue
+
+                # Single tweet entries
                 tweet = _extract_tweet(entry)
                 if not tweet:
                     continue
