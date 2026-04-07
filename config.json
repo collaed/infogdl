@@ -1,0 +1,23 @@
+{
+    "profiles": [
+        {"platform": "linkedin", "url": "https://www.linkedin.com/in/example-user/recent-activity/shares/"},
+        {"platform": "twitter", "url": "https://twitter.com/example_user/media"}
+    ],
+    "output_dir": "./downloads",
+    "target_width": 1920,
+    "target_height": 1080,
+    "max_file_size_kb": 500,
+    "color_bins": {
+        "low": [0, 5],
+        "medium": [6, 15],
+        "high": [16, 9999]
+    },
+    "fill_bins": {
+        "sparse": [0.0, 0.3],
+        "moderate": [0.3, 0.6],
+        "dense": [0.6, 1.0]
+    },
+    "headless": true,
+    "scroll_count": 5,
+    "scroll_delay": 2.0
+}
