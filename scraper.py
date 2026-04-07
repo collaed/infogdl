@@ -242,9 +242,82 @@ def scrape_profile(platform: str, url: str, download_dir: Path,
         return _scrape_twitter_api(url, cookies, pkey, download_dir,
                                    tracker, full_rescan)
 
-    # LinkedIn: use Selenium
+    # LinkedIn: use Voyager API (like gallery-dl approach for Twitter)
+    if platform == "linkedin":
+        result = _scrape_linkedin_api(url, cookies, pkey, download_dir,
+                                      tracker, full_rescan)
+        if result is not None:
+            return result
+        log.info("LinkedIn API failed, falling back to Selenium")
+
+    # Fallback: Selenium
     return _scrape_selenium(platform, url, cookies, domain, pkey, download_dir,
                             headless, scroll_count, scroll_delay, tracker, full_rescan)
+
+
+def _scrape_linkedin_api(url: str, cookies: dict, pkey: str,
+                         download_dir: Path,
+                         tracker: ProgressTracker | None,
+                         full_rescan: bool) -> list[Path] | None:
+    """Scrape LinkedIn using Voyager API — no Selenium needed."""
+    try:
+        from linkedin_api_client import create_client, get_profile_media
+    except ImportError:
+        log.debug("linkedin-api not installed, skipping API method")
+        return None
+
+    # Extract public_id from URL
+    # https://www.linkedin.com/in/someone/recent-activity/shares/
+    parts = url.rstrip("/").split("/")
+    try:
+        idx = parts.index("in")
+        public_id = parts[idx + 1]
+    except (ValueError, IndexError):
+        log.warning("Cannot extract LinkedIn public_id from %s", url)
+        return None
+
+    api = create_client(cookies)
+    if not api:
+        return None
+
+    log.info("🔗 Using LinkedIn Voyager API for %s", public_id)
+    items = get_profile_media(api, public_id)
+
+    if not items:
+        return []  # API worked but no images — don't fall back
+
+    if tracker and not full_rescan:
+        before = len(items)
+        items = [it for it in items if not tracker.is_known(pkey, it["url"])]
+        if before - len(items):
+            log.info("Skipping %d already-downloaded images", before - len(items))
+
+    session = _make_session(cookies)
+    downloaded = []
+    download_dir.mkdir(parents=True, exist_ok=True)
+
+    for i, item in enumerate(items):
+        img_url = item["url"]
+        try:
+            resp = session.get(img_url, timeout=15)
+            resp.raise_for_status()
+        except Exception as e:
+            log.warning("Failed to download %s: %s", img_url, e)
+            continue
+
+        ext = _guess_ext(resp.headers.get("content-type", ""), img_url)
+        fname = download_dir / f"li_{i:04d}{ext}"
+        fname.write_bytes(resp.content)
+        downloaded.append(fname)
+        log.info("📥 [linkedin] %d/%d  %s  (%.0f KB)",
+                 i + 1, len(items), fname.name, len(resp.content) / 1024)
+
+        if tracker:
+            tracker.record(pkey, img_url, item["ts"])
+
+        time.sleep(random.uniform(0.5, 1.5))
+
+    return downloaded
 
 
 def _scrape_twitter_api(url: str, cookies: dict, pkey: str,

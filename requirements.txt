@@ -3,4 +3,5 @@ Pillow
 numpy
 selenium
 scikit-learn
+linkedin-api
 browser-cookie3
