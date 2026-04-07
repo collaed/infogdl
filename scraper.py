@@ -11,6 +11,7 @@ Session handling modeled after gallery-dl:
 import time
 import json
 import logging
+import random
 from pathlib import Path
 from urllib.parse import urlparse
 
@@ -212,13 +213,19 @@ def scrape_profile(platform: str, url: str, download_dir: Path,
                 resp.raise_for_status()
             except requests.exceptions.HTTPError as e:
                 if e.response and e.response.status_code == 429:
-                    wait = int(e.response.headers.get("Retry-After", 60))
-                    log.warning("⏳ Rate limited by %s — backing off %ds to avoid ban",
-                                platform, wait)
+                    # Exponential backoff: 60s, 120s, 240s (gallery-dl style)
+                    base_wait = int(e.response.headers.get("Retry-After", 60))
+                    wait = base_wait * (2 ** min(getattr(scrape_profile, '_429_count', 0), 3))
+                    scrape_profile._429_count = getattr(scrape_profile, '_429_count', 0) + 1
+                    until = time.time() + wait
+                    t = time.localtime(until)
+                    log.warning("⏳ Rate limited by %s — backing off %ds until %02d:%02d:%02d",
+                                platform, wait, t.tm_hour, t.tm_min, t.tm_sec)
                     time.sleep(wait)
                     try:
                         resp = session.get(img_url, timeout=15)
                         resp.raise_for_status()
+                        scrape_profile._429_count = 0  # reset on success
                     except Exception:
                         log.warning("Failed after rate limit wait: %s", img_url)
                         continue
@@ -243,6 +250,9 @@ def scrape_profile(platform: str, url: str, download_dir: Path,
 
             if tracker:
                 tracker.record(pkey, img_url, item["ts"])
+
+            # Per-request throttle (gallery-dl style: 0.5-1.5s between downloads)
+            time.sleep(random.uniform(0.5, 1.5))
 
     finally:
         driver.quit()

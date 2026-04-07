@@ -4,6 +4,7 @@ import json
 import logging
 import argparse
 import time
+import random
 from pathlib import Path
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from PIL import Image
@@ -110,9 +111,19 @@ def _scrape_one(profile: dict, cfg: dict, raw_dir: Path,
     )
     log.info("Downloaded %d new images from %s", len(files), url)
 
-    # Throttle between profiles to avoid bans
-    delay = 5 + (len(files) * 0.5)  # more files = longer cooldown
-    log.info("⏸ Cooling down %.0fs before next profile", delay)
+    # Throttle between profiles — gallery-dl style escalating cooldown
+    # Short pause after few images, longer pause after many
+    if len(files) > 20:
+        delay = random.uniform(120, 180)  # 2-3 min after heavy scrape
+    elif len(files) > 5:
+        delay = random.uniform(30, 60)    # 30-60s after moderate scrape
+    else:
+        delay = random.uniform(5, 15)     # 5-15s after light scrape
+
+    until = time.time() + delay
+    t = time.localtime(until)
+    log.info("⏸ Cooling down %.0fs until %02d:%02d:%02d before next profile",
+             delay, t.tm_hour, t.tm_min, t.tm_sec)
     time.sleep(delay)
 
     return files
