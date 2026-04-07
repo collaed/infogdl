@@ -118,38 +118,73 @@ def _make_driver(headless: bool = True) -> webdriver.Chrome:
 
 def _inject_cookies(driver: webdriver.Chrome, cookies: dict, domain: str):
     driver.get(f"https://{domain}")
+    time.sleep(2)
+    injected = 0
     for name, value in cookies.items():
         try:
             driver.add_cookie({"name": name, "value": value, "domain": f".{domain}"})
-        except Exception:
-            pass
+            injected += 1
+        except Exception as e:
+            log.debug("Cookie inject failed for %s: %s", name, e)
+    log.info("Injected %d/%d cookies for %s", injected, len(cookies), domain)
 
 
 def _scroll_and_collect(driver: webdriver.Chrome, url: str,
                         scroll_count: int, scroll_delay: float,
                         min_size: int = 200) -> list[dict]:
-    """Scroll page and collect image URLs with timestamps.
-    Returns list of {url, ts} dicts, newest first."""
+    """Scroll page and collect image URLs with timestamps."""
+    log.info("Loading %s", url)
     driver.get(url)
-    time.sleep(3)
+    time.sleep(4)
+
+    # Log page state for debugging
+    title = driver.title
+    cur_url = driver.current_url
+    log.info("Page loaded: '%s' (url: %s)", title, cur_url)
+
+    # Check if we got redirected to login
+    if any(x in cur_url.lower() for x in ["login", "signin", "authwall", "checkpoint"]):
+        log.error("❌ Redirected to login page — cookies are not working. "
+                   "Make sure you're logged in to this site in your browser.")
+        return []
+
     seen = set()
     results = []
 
     for scroll_i in range(scroll_count):
-        imgs = driver.find_elements(By.TAG_NAME, "img")
-        for img in imgs:
+        # Count all images on page
+        all_imgs = driver.find_elements(By.TAG_NAME, "img")
+        new_this_scroll = 0
+
+        for img in all_imgs:
             src = img.get_attribute("src") or ""
             if not src.startswith("http") or src in seen:
                 continue
-            nat_w = driver.execute_script("return arguments[0].naturalWidth", img)
-            nat_h = driver.execute_script("return arguments[0].naturalHeight", img)
+            try:
+                nat_w = driver.execute_script("return arguments[0].naturalWidth", img)
+                nat_h = driver.execute_script("return arguments[0].naturalHeight", img)
+            except Exception:
+                continue
             if nat_w and nat_h and int(nat_w) > min_size and int(nat_h) > min_size:
                 seen.add(src)
-                # Use scroll position as rough ordering proxy (earlier = newer)
                 results.append({"url": src, "ts": time.time(), "order": len(results)})
+                new_this_scroll += 1
+            elif nat_w and nat_h:
+                log.debug("Skipped small image %dx%d: %s", nat_w, nat_h, src[:80])
+
+        log.info("Scroll %d/%d: %d images on page, %d new candidates (total: %d)",
+                 scroll_i + 1, scroll_count, len(all_imgs), new_this_scroll, len(results))
 
         driver.execute_script("window.scrollBy(0, window.innerHeight);")
         time.sleep(scroll_delay)
+
+    if not results:
+        # Dump page info for debugging
+        body_len = len(driver.page_source or "")
+        img_count = len(driver.find_elements(By.TAG_NAME, "img"))
+        log.warning("⚠ No candidate images found. Page has %d bytes, %d <img> tags. "
+                    "This may mean: cookies expired, page layout changed, or no images >%dpx.",
+                    body_len, img_count, min_size)
 
     return results
 

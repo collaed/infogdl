@@ -1,4 +1,6 @@
 .sessions/
 .infogdl.db
+infogdl.log
 downloads/
+output/
 __pycache__/

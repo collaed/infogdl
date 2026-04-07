@@ -33,14 +33,18 @@ def load_cookies(domain: str, cookie_file: str | None = None,
 
     for name in browsers:
         try:
+            log.info("Trying %s for %s cookies...", name, domain)
             cookies = _extract_from_browser(name, domain)
             if cookies:
-                log.info("Extracted %d cookies from %s for %s",
+                log.info("✓ Extracted %d cookies from %s for %s",
                          len(cookies), name, domain)
                 return cookies
+            else:
+                log.info("  %s: no cookies found for %s", name, domain)
         except Exception as e:
-            log.debug("Failed to get cookies from %s: %s", name, e)
+            log.info("  %s: failed (%s)", name, e)
 
+    log.warning("No cookies found for %s from any browser", domain)
     return {}
 
 
