@@ -60,6 +60,18 @@ python infogdl.py
 
 The tool borrows your browser session cookies — no credentials are stored or requested.
 
+### Progress tracking
+
+Each profile's download progress is stored in `.infogdl.db`. On subsequent runs, only new images are downloaded:
+
+```bash
+# Normal run — skips already-downloaded images
+python infogdl.py
+
+# Full rescan — ignore progress, re-download everything
+python infogdl.py --full-rescan
+```
+
 ### Options
 
 | Flag | Description |
@@ -67,6 +79,8 @@ The tool borrows your browser session cookies — no credentials are stored or r
 | `-i`, `--input` | Input directory of images (recursive) |
 | `-o`, `--output` | Output directory (overrides config) |
 | `-c`, `--config` | Config file path (default: `config.json`) |
+| `--delete` | Delete original files after processing |
+| `--full-rescan` | Ignore progress tracker, re-download everything |
 
 ## Configuration
 
@@ -76,6 +90,8 @@ The tool borrows your browser session cookies — no credentials are stored or r
 |-----|---------|-------------|
 | `target_width` / `target_height` | 1920 / 1080 | Max dimensions to scale into |
 | `max_file_size_kb` | 500 | Compress if file exceeds this size |
+| `cookie_file` | null | Path to Netscape-format cookie file |
+| `browser` | null | Force a specific browser for cookies (`chrome`, `firefox`, `edge`, `brave`, `opera`) |
 | `color_bins` | low/medium/high | Thresholds for color count classification |
 | `fill_bins` | sparse/moderate/dense | Thresholds for information density |
 | `headless` | true | Run browser in headless mode |
@@ -83,12 +99,14 @@ The tool borrows your browser session cookies — no credentials are stored or r
 
 ## How it works
 
-1. **Scrape** — Selenium opens each profile, scrolls to load content, collects images >200px (skips avatars/icons)
-2. **Analyze** — Each image is measured for dominant color count (k-means clustering), fill rate (edge density), and orientation
-3. **Sort** — Placed into subfolders based on the analysis
-4. **Crop** — Content bounding box detected via background color sampling; at least 1px border always preserved
-5. **Resize** — Scaled to fill one dimension of the target size, maintaining aspect ratio (max 2× upscale)
-6. **Compress** — PNG if small enough, otherwise JPEG at decreasing quality until under the size limit
+1. **Authenticate** — Extracts cookies directly from browser SQLite databases (Chrome, Firefox, Edge, Brave, Opera) or imports a Netscape cookie file. Sessions are cached and validated before use.
+2. **Scrape** — Selenium opens each profile, scrolls to load content, collects images >200px (skips avatars/icons)
+3. **Track** — Each downloaded URL is recorded in `.infogdl.db` per profile. Next run skips known URLs.
+4. **Analyze** — Each image is measured for dominant color count (k-means clustering), fill rate (edge density), and orientation
+5. **Sort** — Placed into subfolders based on the analysis
+6. **Crop** — Content bounding box detected via background color sampling; at least 1px border always preserved
+7. **Resize** — Scaled to fill one dimension of the target size, maintaining aspect ratio (max 2× upscale)
+8. **Compress** — PNG if small enough, otherwise JPEG at decreasing quality until under the size limit
 
 ## License
 
