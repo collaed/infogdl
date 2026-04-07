@@ -81,6 +81,7 @@ python infogdl.py --full-rescan
 | `-c`, `--config` | Config file path (default: `config.json`) |
 | `--delete` | Delete original files after processing |
 | `--full-rescan` | Ignore progress tracker, re-download everything |
+| `--invert-bright [T]` | Invert colors on bright images (default threshold: 0.70) |
 
 ## Configuration
 

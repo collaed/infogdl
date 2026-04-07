@@ -2,5 +2,5 @@ requests
 Pillow
 numpy
 selenium
-browser-cookie3
 scikit-learn
+browser-cookie3
