@@ -60,6 +60,8 @@ python infogdl.py
 
 The tool borrows your browser session cookies — no credentials are stored or requested.
 
+If you already use [gallery-dl](https://github.com/mikf/gallery-dl), infogdl will automatically pick up your gallery-dl config (`~/.config/gallery-dl/config.json` on Linux, `%APPDATA%\gallery-dl\config.json` on Windows) and use the same cookie source (browser or cookie file). Just run infogdl from the same directory.
+
 ### Progress tracking
 
 Each profile's download progress is stored in `.infogdl.db`. On subsequent runs, only new images are downloaded:

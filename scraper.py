@@ -22,6 +22,7 @@ from requests.adapters import HTTPAdapter, Retry
 
 from cookies import load_cookies
 from progress import ProgressTracker
+from gdl_compat import load_gallery_dl_config, extract_cookie_source
 
 log = logging.getLogger(__name__)
 
@@ -39,8 +40,21 @@ def _profile_key(platform: str, url: str) -> str:
 
 def _get_cookies(platform: str, cookie_file: str | None = None,
                  browser: str | None = None) -> dict[str, str]:
-    """Get cookies with caching across runs."""
+    """Get cookies with caching across runs.
+    Falls back to gallery-dl config if no explicit source given."""
     domain = "linkedin.com" if platform == "linkedin" else "twitter.com"
+
+    # If no explicit source, try gallery-dl config
+    if not cookie_file and not browser:
+        gdl_cfg = load_gallery_dl_config()
+        if gdl_cfg:
+            gdl_browser, gdl_cookie_file = extract_cookie_source(gdl_cfg, platform)
+            if gdl_browser:
+                browser = gdl_browser
+                log.info("Using browser '%s' from gallery-dl config", browser)
+            if gdl_cookie_file:
+                cookie_file = gdl_cookie_file
+                log.info("Using cookie file '%s' from gallery-dl config", cookie_file)
 
     # Check cache first
     cache = SESSION_CACHE / f"{platform}.json"
