@@ -135,7 +135,7 @@ def _scroll_and_collect(driver: webdriver.Chrome, url: str,
     """Scroll page and collect image URLs with timestamps."""
     log.info("Loading %s", url)
     driver.get(url)
-    time.sleep(4)
+    time.sleep(5)
 
     # Log page state for debugging
     title = driver.title
@@ -152,28 +152,46 @@ def _scroll_and_collect(driver: webdriver.Chrome, url: str,
     results = []
 
     for scroll_i in range(scroll_count):
-        # Count all images on page
-        all_imgs = driver.find_elements(By.TAG_NAME, "img")
+        # Collect images via JS — handles lazy-loaded, data-src, background-image,
+        # and srcset attributes that LinkedIn/X use heavily
+        img_urls = driver.execute_script("""
+            var urls = [];
+            // Standard <img> tags — check src, data-src, data-delayed-url
+            document.querySelectorAll('img').forEach(function(img) {
+                var src = img.src || img.getAttribute('data-src') ||
+                          img.getAttribute('data-delayed-url') ||
+                          img.getAttribute('data-ghost-url') || '';
+                if (src.startsWith('http') && img.naturalWidth > arguments[0] && img.naturalHeight > arguments[0])
+                    urls.push(src);
+                // Also check srcset for high-res versions
+                var srcset = img.getAttribute('srcset') || '';
+                if (srcset) {
+                    var best = srcset.split(',').pop().trim().split(' ')[0];
+                    if (best.startsWith('http')) urls.push(best);
+                }
+            });
+            // Background images (LinkedIn uses these for post images)
+            document.querySelectorAll('[style*="background-image"]').forEach(function(el) {
+                var m = el.style.backgroundImage.match(/url\\(["']?(https?[^"')]+)/);
+                if (m) urls.push(m[1]);
+            });
+            // LinkedIn feed images in <div data-src> containers
+            document.querySelectorAll('[data-src]').forEach(function(el) {
+                var src = el.getAttribute('data-src');
+                if (src && src.startsWith('http')) urls.push(src);
+            });
+            return urls;
+        """, min_size)
+
         new_this_scroll = 0
-
-        for img in all_imgs:
-            try:
-                src = img.get_attribute("src") or ""
-                if not src.startswith("http") or src in seen:
-                    continue
-                nat_w = driver.execute_script("return arguments[0].naturalWidth", img)
-                nat_h = driver.execute_script("return arguments[0].naturalHeight", img)
-            except Exception:
-                continue
-            if nat_w and nat_h and int(nat_w) > min_size and int(nat_h) > min_size:
-                seen.add(src)
-                results.append({"url": src, "ts": time.time(), "order": len(results)})
+        for img_url in img_urls:
+            if img_url not in seen:
+                seen.add(img_url)
+                results.append({"url": img_url, "ts": time.time(), "order": len(results)})
                 new_this_scroll += 1
-            elif nat_w and nat_h:
-                log.debug("Skipped small image %dx%d: %s", nat_w, nat_h, src[:80])
 
-        log.info("Scroll %d/%d: %d images on page, %d new candidates (total: %d)",
-                 scroll_i + 1, scroll_count, len(all_imgs), new_this_scroll, len(results))
+        log.info("Scroll %d/%d: %d image URLs found, %d new candidates (total: %d)",
+                 scroll_i + 1, scroll_count, len(img_urls), new_this_scroll, len(results))
 
         driver.execute_script("window.scrollBy(0, window.innerHeight);")
         time.sleep(scroll_delay)
@@ -182,9 +200,11 @@ def _scroll_and_collect(driver: webdriver.Chrome, url: str,
         # Dump page info for debugging
         body_len = len(driver.page_source or "")
         img_count = len(driver.find_elements(By.TAG_NAME, "img"))
-        log.warning("⚠ No candidate images found. Page has %d bytes, %d <img> tags. "
-                    "This may mean: cookies expired, page layout changed, or no images >%dpx.",
-                    body_len, img_count, min_size)
+        bg_count = driver.execute_script(
+            "return document.querySelectorAll('[style*=\"background-image\"]').length")
+        log.warning("⚠ No candidate images found. Page: %d bytes, %d <img>, %d background-image. "
+                    "Try increasing scroll_count in config or check if the profile has posts.",
+                    body_len, img_count, bg_count)
 
     return results
 
