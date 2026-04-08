@@ -73,6 +73,8 @@ def _get_cookies(platform: str, cookie_file: str | None = None,
         cookies = load_cookies("x.com", cookie_file=cookie_file, browser=browser)
         if not cookies:
             cookies = load_cookies("twitter.com", cookie_file=cookie_file, browser=browser)
+    elif platform == "instagram":
+        cookies = load_cookies("instagram.com", cookie_file=cookie_file, browser=browser)
     else:
         domain = "linkedin.com" if platform == "linkedin" else platform
         cookies = load_cookies(domain, cookie_file=cookie_file, browser=browser)
@@ -250,6 +252,11 @@ def scrape_profile(platform: str, url: str, download_dir: Path,
         return _scrape_twitter_api(url, cookies, pkey, download_dir,
                                    tracker, full_rescan)
 
+    # Instagram: use GraphQL API
+    if platform == "instagram":
+        return _scrape_instagram_api(url, cookies, pkey, download_dir,
+                                     tracker, full_rescan)
+
     # LinkedIn: use Voyager API (like gallery-dl approach for Twitter)
     if platform == "linkedin":
         result = _scrape_linkedin_api(url, cookies, pkey, download_dir,
@@ -261,6 +268,74 @@ def scrape_profile(platform: str, url: str, download_dir: Path,
     # Fallback: Selenium
     return _scrape_selenium(platform, url, cookies, domain, pkey, download_dir,
                             headless, scroll_count, scroll_delay, tracker, full_rescan)
+
+
+def _scrape_instagram_api(url: str, cookies: dict, pkey: str,
+                          download_dir: Path,
+                          tracker: ProgressTracker | None,
+                          full_rescan: bool) -> list[Path]:
+    """Scrape Instagram using GraphQL API."""
+    from instagram_api import InstagramAPI
+
+    # Extract username from URL: instagram.com/username/...
+    username = url.rstrip("/").split("/")[-1]
+    if username in ("", "instagram.com"):
+        parts = url.rstrip("/").split("/")
+        username = parts[-2] if len(parts) > 1 else parts[-1]
+
+    log.info("📷 Using Instagram GraphQL API for @%s", username)
+    api = InstagramAPI(cookies)
+
+    try:
+        items = api.user_media(username)
+    except Exception as e:
+        log.error("Instagram API failed for @%s: %s", username, e)
+        return []
+
+    log.info("Found %d media items from @%s via API", len(items), username)
+
+    if tracker and not full_rescan:
+        before = len(items)
+        items = [it for it in items if not tracker.is_known(pkey, it["url"])]
+        if before - len(items):
+            log.info("Skipping %d already-downloaded images", before - len(items))
+
+    session = _make_session(cookies)
+    downloaded = []
+    download_dir.mkdir(parents=True, exist_ok=True)
+    filename_fmt = _get_filename_fmt()
+
+    for i, item in enumerate(items):
+        img_url = item["url"]
+        try:
+            resp = session.get(img_url, timeout=15)
+            resp.raise_for_status()
+        except Exception as e:
+            log.warning("Failed to download %s: %s", img_url, e)
+            continue
+
+        ext = _guess_ext(resp.headers.get("content-type", ""), img_url)
+        fname_str = format_filename(filename_fmt,
+            platform="instagram", author=username,
+            id=item.get("post_id", f"ig{i}"), num=i, ext=ext.lstrip("."),
+            date=time.strftime("%Y-%m-%d"))
+        fname = download_dir / fname_str
+        fname.write_bytes(resp.content)
+        downloaded.append(fname)
+        log.info("📥 [instagram] %d/%d  %s  (%.0f KB)",
+                 i + 1, len(items), fname.name, len(resp.content) / 1024)
+
+        meta = build_metadata("instagram", username, item, img_url)
+        meta["caption"] = item.get("caption", "")
+        save_sidecar(fname, meta)
+
+        if tracker:
+            tracker.record(pkey, img_url, item["ts"])
+
+        time.sleep(random.uniform(2.0, 4.0))  # IG is strict
+
+    _export_session_cookies(cookies, "instagram.com")
+    return downloaded
 
 
 def _scrape_linkedin_api(url: str, cookies: dict, pkey: str,
