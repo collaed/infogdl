@@ -345,9 +345,10 @@ border-radius:8px;display:none;z-index:99;font-size:13px}
 <div id="cards"></div>
 <div class="toast" id="toast"></div>
 <script>
+const B = window.location.pathname.replace(/\/$/, '');
 let R=[];
 async function load(){
- let[s,r]=await Promise.all([fetch('/api/stats').then(r=>r.json()),fetch('/api/review').then(r=>r.json())]);
+ let[s,r]=await Promise.all([fetch(B+'/api/stats').then(r=>r.json()),fetch(B+'/api/review').then(r=>r.json())]);
  document.getElementById('st').innerHTML=
   s.profiles+' profiles · '+s.total+' imgs · <span class="badge">'+s.in_review+' to review</span>'+
   (s.scraping?' · <span class="spin">🔄</span> scraping':'');
@@ -357,7 +358,7 @@ function render(){
  let el=document.getElementById('cards');
  if(!R.length){el.innerHTML='<p style="text-align:center;padding:30px;color:#555">All reviewed! Hit 🔄 Scrape for more.</p>';return}
  el.innerHTML=R.map((s,i)=>`<div class="card" id="c${i}">
-  <img src="/img/${encodeURIComponent(s.rel)}" loading="lazy">
+  <img src="'+B+'/img/${encodeURIComponent(s.rel)}" loading="lazy">
   <div class="ci"><div class="cm"><span class="a">${s.profile_key}</span><br>${s.name} · ${Math.round(s.size_kb)}KB
   ${s.meta&&s.meta.text?'<br><em>'+s.meta.text.substring(0,120)+'</em>':''}</div>
   <div class="vb"><button class="up" onclick="vote(${i},'up')">👍</button>
@@ -366,7 +367,7 @@ function render(){
 }
 async function vote(i,d){
  let s=R[i];
- await fetch('/api/vote',{method:'POST',headers:{'Content-Type':'application/json'},
+ await fetch(B+'/api/vote',{method:'POST',headers:{'Content-Type':'application/json'},
   body:JSON.stringify({img_path:s.path,vote:d})});
  document.getElementById('c'+i).classList.add('voted');
  toast(d=='up'?'👍':'👎');setTimeout(load,500);
@@ -374,19 +375,19 @@ async function vote(i,d){
 async function rm(k,i){
  let h=k.split('/').pop();
  if(!confirm('Remove '+h+'?'))return;
- await fetch('/api/remove',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({handle:h})});
+ await fetch(B+'/api/remove',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({handle:h})});
  document.getElementById('c'+i).classList.add('voted');toast('🚫 '+h);
 }
 async function scrape(){toast('🔄 Starting scrape...');
- await fetch('/api/scrape',{method:'POST',headers:{'Content-Type':'application/json'},body:'{}'});
+ await fetch(B+'/api/scrape',{method:'POST',headers:{'Content-Type':'application/json'},body:'{}'});
  setTimeout(load,5000);setInterval(load,15000);
 }
 async function apply(){if(!confirm('Apply votes?'))return;
- await fetch('/api/apply',{method:'POST',headers:{'Content-Type':'application/json'},body:'{}'});
+ await fetch(B+'/api/apply',{method:'POST',headers:{'Content-Type':'application/json'},body:'{}'});
  toast('✅ Applied');load();
 }
 async function sync(){
- await fetch('/api/sync',{method:'POST',headers:{'Content-Type':'application/json'},body:'{}'});
+ await fetch(B+'/api/sync',{method:'POST',headers:{'Content-Type':'application/json'},body:'{}'});
  toast('📤 Synced to ref');
 }
 function toast(m){let t=document.getElementById('toast');t.textContent=m;t.style.display='block';
