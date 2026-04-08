@@ -395,6 +395,22 @@ load();
 </script></body></html>"""
 
 
+def _periodic_rescan():
+    """Rescan images every 2 hours."""
+    while True:
+        time.sleep(2 * 3600)
+        try:
+            Handler.collection = scan_images()
+            enforce_limits(Handler.collection)
+            Handler.queue = _load_json(QUEUE_FILE, {"rated": []})
+            Handler.review = build_review(Handler.collection, Handler.queue)
+            log.info("🔄 Periodic rescan: %d profiles, %d images",
+                     len(Handler.collection),
+                     sum(len(v) for v in Handler.collection.values()))
+        except Exception as e:
+            log.warning("Rescan failed: %s", e)
+
+
 def main():
     DATA_DIR.mkdir(parents=True, exist_ok=True)
     IMG_DIR.mkdir(parents=True, exist_ok=True)
@@ -406,9 +422,12 @@ def main():
     enforce_limits(Handler.collection)
     Handler.review = build_review(Handler.collection, Handler.queue)
 
+    # Background rescan thread
+    threading.Thread(target=_periodic_rescan, daemon=True).start()
+
     port = int(os.environ.get("PORT", 8000))
     server = HTTPServer(("0.0.0.0", port), Handler)
-    log.info("infogdl-web running on :%d (%d profiles, %d images)",
+    log.info("infogdl-web running on :%d (%d profiles, %d images, rescan every 2h)",
              port, len(Handler.collection),
              sum(len(v) for v in Handler.collection.values()))
     server.serve_forever()
