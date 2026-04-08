@@ -430,7 +430,7 @@ body{font-family:-apple-system,sans-serif;background:#1a1a2e;color:#eee}
 .cm{font-size:12px;color:#aaa;max-width:55%} .cm .a{color:#e94560;font-weight:bold}
 .vb button{padding:7px 14px;margin:0 3px;border:none;border-radius:6px;cursor:pointer;font-size:16px}
 .up{background:#2d6a4f;color:#fff} .dn{background:#9b2226;color:#fff}
-.rm{background:#444;color:#fff;font-size:11px!important;padding:5px 8px!important}
+.sk{background:#555;color:#fff}
 .voted{opacity:.12;pointer-events:none}
 .toast{position:fixed;bottom:16px;right:16px;background:#0f3460;color:#fff;padding:10px 18px;
 border-radius:8px;display:none;z-index:99;font-size:13px}
@@ -453,9 +453,10 @@ border-radius:8px;display:none;z-index:99;font-size:13px}
 <div class="toast" id="toast"></div>
 <script>
 const B = window.location.pathname.replace(/\/$/, '');
-let R=[];
+let R=[], ST={};
 async function load(){
  let[s,r]=await Promise.all([fetch(B+'/api/stats').then(r=>r.json()),fetch(B+'/api/review').then(r=>r.json())]);
+ ST=s;
  document.getElementById('st').innerHTML=
   s.profiles+' profiles · '+s.total+' imgs · <span class="badge">'+s.in_review+' to review</span>'+
   (s.scraping?' · <span class="spin">🔄</span> scraping':'')+
@@ -466,26 +467,27 @@ async function load(){
 function render(){
  let el=document.getElementById('cards');
  if(!R.length){el.innerHTML='<p style="text-align:center;padding:30px;color:#555">All reviewed! Hit 🔄 Scrape for more.</p>';return}
- el.innerHTML=R.map((s,i)=>`<div class="card" id="c${i}">
+ el.innerHTML=R.map((s,i)=>{
+  let h=s.profile_key.split('/').pop();
+  let up=(ST.votes.up||{})[h]||0;
+  let dn=(ST.votes.down||{})[h]||0;
+  let score=up-dn;
+  let skip=score<5?`<button class="sk" onclick="vote(${i},'skip')">⏭</button>`:'';
+  return `<div class="card" id="c${i}">
   <img src="${B}/img/${encodeURIComponent(s.rel)}" loading="lazy">
-  <div class="ci"><div class="cm"><span class="a">${s.profile_key}</span><br>${s.name} · ${Math.round(s.size_kb)}KB
+  <div class="ci"><div class="cm"><span class="a">${s.profile_key}</span> <span style="color:#666">(${score>=0?'+':''}${score})</span><br>${s.name} · ${Math.round(s.size_kb)}KB
   ${s.meta&&s.meta.text?'<br><em>'+s.meta.text.substring(0,120)+'</em>':''}</div>
   <div class="vb"><button class="up" onclick="vote(${i},'up')">👍</button>
-  <button class="dn" onclick="vote(${i},'down')">👎</button>
-  <button class="rm" onclick="rm('${s.profile_key}',${i})">🚫</button></div></div></div>`).join('');
+  ${skip}
+  <button class="dn" onclick="vote(${i},'down')">👎</button></div></div></div>`;
+ }).join('');
 }
 async function vote(i,d){
  let s=R[i];
  await fetch(B+'/api/vote',{method:'POST',headers:{'Content-Type':'application/json'},
   body:JSON.stringify({img_path:s.path,vote:d})});
  document.getElementById('c'+i).classList.add('voted');
- toast(d=='up'?'👍':'👎');setTimeout(load,500);
-}
-async function rm(k,i){
- let h=k.split('/').pop();
- if(!confirm('Remove '+h+'?'))return;
- await fetch(B+'/api/remove',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({handle:h})});
- document.getElementById('c'+i).classList.add('voted');toast('🚫 '+h);
+ toast(d=='up'?'👍':d=='skip'?'⏭ Skipped':'👎');setTimeout(load,500);
 }
 async function scrape(){toast('🔄 Starting scrape...');
  await fetch(B+'/api/scrape',{method:'POST',headers:{'Content-Type':'application/json'},body:'{}'});
