@@ -588,7 +588,7 @@ async function addText(i){
   if(d.ok){
    toast('📝 Text added ('+d.size+'B)');
    // Force cache-busting reload: add version to path
-   setTimeout(()=>window.location.href=B+'/?v='+Date.now(),500);
+   setTimeout(()=>window.location.replace(B+'/'),500);
   } else { toast('❌ '+d.error); }
  }catch(e){console.error(e);toast('Error: '+e.message);}
 }
