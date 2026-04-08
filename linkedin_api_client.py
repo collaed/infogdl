@@ -1,157 +1,147 @@
-"""LinkedIn Voyager API client — uses the linkedin-api library.
+"""LinkedIn Voyager API client — direct HTTP, no third-party library.
 
-Direct HTTP to LinkedIn's internal API. No Selenium needed.
+Uses the same internal API endpoints as LinkedIn's web app.
 Requires li_at and JSESSIONID cookies from a logged-in browser session.
 """
+import re
+import json
 import time
 import random
 import logging
-from linkedin_api import Linkedin
+import requests
+from requests.adapters import HTTPAdapter, Retry
 
 log = logging.getLogger(__name__)
 
 
-def create_client(cookies: dict[str, str]) -> Linkedin | None:
-    """Create a LinkedIn API client from browser cookies."""
-    li_at = cookies.get("li_at", "")
-    jsessionid = cookies.get("JSESSIONID", "").strip('"')
+class LinkedInAPI:
+    """Direct LinkedIn Voyager API client."""
 
-    if not li_at:
-        log.error("Missing 'li_at' cookie — are you logged into LinkedIn?")
-        return None
+    def __init__(self, cookies: dict[str, str]):
+        li_at = cookies.get("li_at", "")
+        jsid = cookies.get("JSESSIONID", "").strip('"')
 
-    try:
-        api = Linkedin("", "", cookies={"li_at": li_at, "JSESSIONID": jsessionid})
-        log.info("✓ LinkedIn API client initialized")
-        return api
-    except Exception as e:
-        log.error("Failed to create LinkedIn client: %s", e)
-        return None
+        if not li_at:
+            raise ValueError("Missing li_at cookie")
+
+        self.session = requests.Session()
+        retries = Retry(total=3, backoff_factor=2.0, status_forcelist=[500, 502, 503])
+        self.session.mount("https://", HTTPAdapter(max_retries=retries))
+        self.session.cookies.set("li_at", li_at, domain=".linkedin.com")
+        self.session.cookies.set("JSESSIONID", jsid, domain=".linkedin.com")
+        self.session.headers.update({
+            "csrf-token": jsid,
+            "User-Agent": ("Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
+                           "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"),
+            "x-restli-protocol-version": "2.0.0",
+        })
+        self._root = "https://www.linkedin.com/voyager/api"
+
+    def _get_profile_urn(self, public_id: str) -> str | None:
+        r = self.session.get(
+            f"{self._root}/identity/dash/profiles",
+            params={"q": "memberIdentity", "memberIdentity": public_id},
+            timeout=15)
+        if r.status_code != 200:
+            log.warning("Profile lookup failed for %s: HTTP %d", public_id, r.status_code)
+            return None
+        elements = r.json().get("elements", [])
+        if not elements:
+            return None
+        return elements[0].get("entityUrn")
+
+    def get_profile_media(self, public_id: str, post_count: int = 50) -> list[dict]:
+        """Fetch image URLs from a profile's posts."""
+        log.info("📋 Fetching posts for linkedin.com/in/%s", public_id)
+
+        urn = self._get_profile_urn(public_id)
+        if not urn:
+            log.warning("Could not find profile URN for %s", public_id)
+            return []
+
+        all_media = []
+        start = 0
+        batch = min(post_count, 10)
+
+        while start < post_count:
+            r = self.session.get(
+                f"{self._root}/identity/profileUpdatesV2",
+                params={
+                    "q": "memberShareFeed",
+                    "moduleKey": "member-shares:phone",
+                    "count": batch,
+                    "start": start,
+                    "profileUrn": urn,
+                    "includeLongTermHistory": True,
+                },
+                timeout=15)
+
+            if r.status_code == 429:
+                wait = int(r.headers.get("Retry-After", 60))
+                t = time.localtime(time.time() + wait)
+                log.warning("⏳ LinkedIn rate limited — waiting %ds until %02d:%02d:%02d",
+                            wait, t.tm_hour, t.tm_min, t.tm_sec)
+                time.sleep(wait)
+                continue
+
+            if r.status_code != 200:
+                log.warning("Posts fetch failed for %s: HTTP %d", public_id, r.status_code)
+                break
+
+            data = r.json()
+            elements = data.get("elements", [])
+            if not elements:
+                break
+
+            for el in elements:
+                urls = _extract_image_urls(el)
+                for url in urls:
+                    all_media.append({"url": url, "ts": time.time()})
+
+            token = data.get("metadata", {}).get("paginationToken", "")
+            if not token:
+                break
+            start += batch
+            time.sleep(random.uniform(1.0, 2.0))
+
+        log.info("  Found %d images across posts for %s", len(all_media), public_id)
+        return all_media
 
 
-def get_profile_media(api: Linkedin, public_id: str,
-                      post_count: int = 50) -> list[dict]:
-    """Fetch image URLs from a LinkedIn profile's posts.
+def _extract_image_urls(post: dict) -> list[str]:
+    """Extract content image URLs from a post using recursive JSON traversal."""
+    results = []
+    seen = set()
 
-    Returns list of {"url": ..., "post_urn": ..., "ts": ...} dicts.
-    """
-    log.info("📋 Fetching posts for linkedin.com/in/%s", public_id)
-
-    try:
-        posts = api.get_profile_posts(public_id=public_id, post_count=post_count)
-    except Exception as e:
-        log.warning("Failed to get posts for %s: %s", public_id, e)
-        return []
-
-    media_items = []
-    for post in posts:
-        try:
-            images = _extract_images(post)
-            post_urn = post.get("updateMetadata", {}).get("urn", "")
-            for url in images:
-                media_items.append({
-                    "url": url,
-                    "post_urn": post_urn,
-                    "ts": time.time(),
-                })
-        except Exception:
-            continue
-
-    log.info("  Found %d images across %d posts for %s",
-             len(media_items), len(posts), public_id)
-
-    # Courtesy delay
-    time.sleep(random.uniform(1.0, 2.0))
-    return media_items
-
-
-def get_following(api: Linkedin) -> list[str]:
-    """Get public IDs of profiles the user follows.
-    Note: linkedin-api doesn't have a direct 'following' endpoint,
-    so we use connections as a proxy."""
-    try:
-        connections = api.get_profile_connections(limit=500)
-        return [c.get("public_id") for c in connections
-                if c.get("public_id")]
-    except Exception as e:
-        log.warning("Failed to get connections: %s", e)
-        return []
-
-
-def _extract_images(post: dict) -> list[str]:
-    """Extract image URLs from a LinkedIn post object."""
-    urls = []
-
-    # Navigate the post content structure
     content = post.get("content", {})
-    if not content:
-        # Try alternate structure
-        value = post.get("value", {})
-        content = value.get("com.linkedin.voyager.feed.render.UpdateV2", {})
+    # Search all content component types
+    for key, component in content.items():
+        _find_image_urls(component, results, seen)
 
-    # Images in post content
-    for key in ("images", "articleComponent", "carouselContent"):
-        items = content.get(key, [])
-        if isinstance(items, dict):
-            items = items.get("images", [items])
-        if isinstance(items, list):
-            for item in items:
-                _collect_image_urls(item, urls)
-
-    # Direct image content
-    _collect_image_urls(content, urls)
-
-    # Check reshared content
-    reshared = content.get("resharedContent", {})
-    if reshared:
-        _collect_image_urls(reshared, urls)
-
-    return urls
+    return results
 
 
-def _collect_image_urls(obj: dict, urls: list):
-    """Recursively find image URLs in a nested dict."""
-    if not isinstance(obj, dict):
-        return
-
-    # Direct URL fields
-    for key in ("url", "originalUrl", "digitalmediaAsset",
-                "fileIdentifyingUrlPathSegment"):
-        val = obj.get(key, "")
-        if isinstance(val, str) and val.startswith("http") and _is_image_url(val):
-            if val not in urls:
-                urls.append(val)
-
-    # Nested image attributes
-    for key in ("attributes", "vectorImage", "rootUrl", "artifacts"):
-        val = obj.get(key)
-        if isinstance(val, list):
-            for item in val:
-                _collect_image_urls(item, urls)
-        elif isinstance(val, dict):
-            _collect_image_urls(val, urls)
-        elif isinstance(val, str) and val.startswith("http"):
-            if val not in urls:
-                urls.append(val)
-
-    # Build full URL from rootUrl + artifacts
-    root = obj.get("rootUrl", "")
-    artifacts = obj.get("artifacts", [])
-    if root and artifacts:
-        # Pick the largest artifact
-        best = max(artifacts, key=lambda a: a.get("width", 0) * a.get("height", 0),
-                   default=None)
-        if best:
-            segment = best.get("fileIdentifyingUrlPathSegment", "")
-            if segment:
-                full = root + segment
-                if full not in urls:
-                    urls.append(full)
-
-
-def _is_image_url(url: str) -> bool:
-    """Quick check if URL looks like an image."""
-    lower = url.lower()
-    return any(ext in lower for ext in
-               (".jpg", ".jpeg", ".png", ".webp", ".gif",
-                "media.licdn.com", "dms/image"))
+def _find_image_urls(obj, results: list, seen: set):
+    """Recursively find rootUrl+artifacts pairs and build full image URLs."""
+    if isinstance(obj, dict):
+        if "rootUrl" in obj and "artifacts" in obj:
+            root = obj["rootUrl"]
+            # Skip profile pics, backgrounds, logos
+            if any(s in root for s in ("profile-displayphoto", "profile-displaybackground",
+                                        "company-logo")):
+                return
+            arts = obj["artifacts"]
+            if arts:
+                best = max(arts, key=lambda a: a.get("width", 0) * a.get("height", 0))
+                seg = best.get("fileIdentifyingUrlPathSegment", "")
+                if seg:
+                    full = root + seg
+                    base = full.split("?")[0]
+                    if base not in seen:
+                        seen.add(base)
+                        results.append(full)
+        for v in obj.values():
+            _find_image_urls(v, results, seen)
+    elif isinstance(obj, list):
+        for v in obj:
+            _find_image_urls(v, results, seen)

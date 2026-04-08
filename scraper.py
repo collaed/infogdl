@@ -267,14 +267,8 @@ def _scrape_linkedin_api(url: str, cookies: dict, pkey: str,
                          tracker: ProgressTracker | None,
                          full_rescan: bool) -> list[Path] | None:
     """Scrape LinkedIn using Voyager API — no Selenium needed."""
-    try:
-        from linkedin_api_client import create_client, get_profile_media
-    except ImportError:
-        log.debug("linkedin-api not installed, skipping API method")
-        return None
+    from linkedin_api_client import LinkedInAPI
 
-    # Extract public_id from URL
-    # https://www.linkedin.com/in/someone/recent-activity/shares/
     parts = url.rstrip("/").split("/")
     try:
         idx = parts.index("in")
@@ -283,12 +277,14 @@ def _scrape_linkedin_api(url: str, cookies: dict, pkey: str,
         log.warning("Cannot extract LinkedIn public_id from %s", url)
         return None
 
-    api = create_client(cookies)
-    if not api:
+    try:
+        api = LinkedInAPI(cookies)
+    except ValueError as e:
+        log.error("LinkedIn API: %s", e)
         return None
 
     log.info("🔗 Using LinkedIn Voyager API for %s", public_id)
-    items = get_profile_media(api, public_id)
+    items = api.get_profile_media(public_id)
 
     if not items:
         return []  # API worked but no images — don't fall back
