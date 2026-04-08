@@ -15,6 +15,7 @@ from analyze import analyze
 from sorter import sort_path
 from resize import process
 from progress import ProgressTracker
+from metadata import detect_source, save_sidecar
 
 logging.basicConfig(
     level=logging.INFO,
@@ -98,6 +99,20 @@ def _analyze_and_sort(fpath: Path, out_dir: Path, cfg: dict,
              fpath.name, subfolder,
              _fmt_size(orig_size), _fmt_size(out_size), saved_pct,
              info["colors"], info["fill_rate"], info["orientation"])
+
+    # Create sidecar metadata (detect source from filename/EXIF if not already present)
+    final_path = dest_path if dest_path.exists() else dest_path.with_suffix(".jpg")
+    if final_path.exists() and not final_path.with_suffix(".json").exists():
+        source = detect_source(fpath)
+        source.update({
+            "original_file": fpath.name,
+            "colors": info["colors"],
+            "fill_rate": round(info["fill_rate"], 3),
+            "orientation": info["orientation"],
+            "original_size": orig_size,
+            "output_size": out_size,
+        })
+        save_sidecar(final_path, source)
 
     if delete:
         fpath.unlink()
