@@ -137,22 +137,59 @@ def apply_vote(img_path: str, vote: str, collection: dict, queue: dict, votes: d
 
 
 def sync_profiles_to_ref():
-    """Sync profile lists and votes to reference directory."""
+    """Merge profile lists to reference directory.
+    - New profiles from either side are kept (union)
+    - Downvoted/removed profiles stay removed
+    - Votes file is copied as-is
+    """
     REF_DIR.mkdir(parents=True, exist_ok=True)
-
-    # Copy profile lists
     profiles_src = DATA_DIR / "profiles"
     profiles_dst = REF_DIR / "profiles"
-    if profiles_src.is_dir():
-        if profiles_dst.exists():
-            shutil.rmtree(profiles_dst)
-        shutil.copytree(profiles_src, profiles_dst)
+    profiles_dst.mkdir(parents=True, exist_ok=True)
+
+    if not profiles_src.is_dir():
+        return
+
+    # Load downvoted handles to exclude
+    votes = _load_json(VOTES_FILE, {})
+    removed = set()
+    for h, c in votes.get("down", {}).items():
+        if c >= 2:
+            removed.add(h.lower())
+    for h in votes.get("remove_handles", []):
+        removed.add(h.lower())
+
+    # Merge each profile file: union of both sides, minus removed
+    for src_file in profiles_src.glob("*.txt"):
+        dst_file = profiles_dst / src_file.name
+
+        # Collect handles from both sides
+        src_lines = src_file.read_text().splitlines() if src_file.exists() else []
+        dst_lines = dst_file.read_text().splitlines() if dst_file.exists() else []
+
+        seen = set()
+        merged = []
+        for line in src_lines + dst_lines:
+            stripped = line.split("#")[0].strip()
+            parts = stripped.split(None, 1)
+            if len(parts) == 2:
+                handle = parts[1].lstrip("@").split("/")[0].lower()
+                if handle in removed:
+                    continue
+                if handle in seen:
+                    continue
+                seen.add(handle)
+            elif not stripped:
+                continue
+            merged.append(line)
+
+        dst_file.write_text("\n".join(merged) + "\n")
 
     # Copy votes
     if VOTES_FILE.exists():
         shutil.copy2(VOTES_FILE, REF_DIR / "votes.json")
 
-    log.info("Synced profiles and votes to %s", REF_DIR)
+    log.info("Merged profiles to %s (%d handles removed)", REF_DIR, len(removed))
 
 
 def apply_removals(votes: dict):
