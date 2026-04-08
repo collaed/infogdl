@@ -339,9 +339,18 @@ class Handler(SimpleHTTPRequestHandler):
                 self._json({"ok": False, "status": "already_running"})
 
         elif path == "/api/shuffle":
-            # Re-pick images without marking anything as rated
             Handler.review = build_review(Handler.collection, Handler.queue)
             self._json({"ok": True})
+
+        elif path == "/api/reanalyze":
+            from textoverlay import process_overlay
+            count = 0
+            for item in self.review:
+                p = Path(item["path"])
+                if p.exists() and process_overlay(p):
+                    count += 1
+            self._refresh()
+            self._json({"ok": True, "overlaid": count})
 
         elif path == "/api/sync":
             sync_profiles_to_ref()
@@ -456,6 +465,9 @@ border-radius:8px;display:none;z-index:99;font-size:13px}
 </div>
 </div>
 <div id="cards"></div>
+<div style="text-align:center;padding:16px">
+<button class="b3" onclick="reanalyze()" id="btnRe">📝 Re-analyze: add text overlays to these images</button>
+</div>
 <div class="toast" id="toast"></div>
 <script>
 const B = window.location.pathname.replace(/\/$/, '');
@@ -520,6 +532,14 @@ async function addProfile(){
 }
 function toast(m){let t=document.getElementById('toast');t.textContent=m;t.style.display='block';
  setTimeout(()=>t.style.display='none',2500);}
+async function reanalyze(){
+ document.getElementById('btnRe').textContent='⏳ Processing...';
+ let r=await fetch(B+'/api/reanalyze',{method:'POST',headers:{'Content-Type':'application/json'},body:'{}'});
+ let d=await r.json();
+ document.getElementById('btnRe').textContent='📝 Re-analyze: add text overlays to these images';
+ toast('📝 '+d.overlaid+' images got text overlays');
+ R=(await fetch(B+'/api/review').then(r=>r.json()));render();
+}
 load();
 </script></body></html>"""
 
