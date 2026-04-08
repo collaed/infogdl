@@ -65,6 +65,7 @@ def scan_images() -> dict:
             except Exception:
                 pass
         key = f"{meta.get('platform', 'local')}/{meta.get('author', 'unknown')}"
+        mtime = int(f.stat().st_mtime)
         collection[key].append({
             "path": str(f),
             "rel": str(f.relative_to(IMG_DIR)),
@@ -72,6 +73,7 @@ def scan_images() -> dict:
             "size_kb": f.stat().st_size / 1024,
             "meta": meta,
             "profile_key": key,
+            "v": mtime,
         })
     return dict(collection)
 
@@ -285,17 +287,28 @@ class Handler(SimpleHTTPRequestHandler):
                 "scraping": self.scraping,
             })
         elif path.startswith("/img/"):
-            fpath = IMG_DIR / unquote(path[5:])
+            # Path: /img/rel_path/mtime_version — strip version suffix
+            img_rel = unquote(path[5:])
+            # Remove trailing /number (mtime version)
+            parts = img_rel.rsplit("/", 1)
+            if len(parts) == 2 and parts[1].isdigit():
+                img_rel = parts[0]
+            fpath = IMG_DIR / img_rel
             if fpath.exists():
+                data = fpath.read_bytes()
+                log.info("🖼 Serving %s (%d bytes)", fpath.name, len(data))
                 self.send_response(200)
                 ct = {"png": "image/png", "webp": "image/webp"}.get(
                     fpath.suffix.lstrip("."), "image/jpeg")
                 self.send_header("Content-Type", ct)
                 self.send_header("Cache-Control", "no-cache, no-store, must-revalidate")
-                self.send_header("Content-Length", fpath.stat().st_size)
+                self.send_header("Pragma", "no-cache")
+                self.send_header("Expires", "0")
+                self.send_header("Content-Length", len(data))
                 self.end_headers()
-                self.wfile.write(fpath.read_bytes())
+                self.wfile.write(data)
             else:
+                log.warning("🖼 404: %s", fpath)
                 self.send_error(404)
         else:
             self.send_error(404)
@@ -385,6 +398,7 @@ class Handler(SimpleHTTPRequestHandler):
                 new_size = img_path.stat().st_size
                 log.info("  ✅ Overlay saved: %d bytes, text: %s...", new_size, text[:60])
                 img.close()
+                self._refresh()  # rescan so mtime updates in URLs
                 self._json({"ok": True, "size": new_size, "text_preview": text[:80]})
             except Exception as e:
                 log.error("  ❌ Overlay failed: %s", e, exc_info=True)
@@ -530,7 +544,7 @@ function render(){
   let score=up-dn;
   let skip=score<5?`<button class="sk" onclick="vote(${i},'skip')">⏭</button>`:'';
   return `<div class="card" id="c${i}">
-  <img src="${B}/img/${encodeURIComponent(s.rel)}" loading="lazy">
+  <img src="${B}/img/${encodeURIComponent(s.rel)}/${s.v||0}" loading="lazy">
   <div class="ci"><div class="cm"><span class="a">${s.profile_key}</span> <span style="color:#666">(${score>=0?'+':''}${score})</span><br>${s.name} · ${Math.round(s.size_kb)}KB
   ${s.meta&&s.meta.text?'<br><em>'+s.meta.text.substring(0,120)+'</em>':''}</div>
   <div class="vb"><button class="up" onclick="vote(${i},'up')">👍</button>
@@ -581,8 +595,8 @@ async function addText(i){
   let d=await r.json();
   if(d.ok){
    toast('📝 Text added ('+d.size+'B)');
-   // Full reload to bypass cache
-   setTimeout(()=>window.location.reload(),500);
+   // Force cache-busting reload: add version to path
+   setTimeout(()=>window.location.href=B+'/?v='+Date.now(),500);
   } else { toast('❌ '+d.error); }
  }catch(e){console.error(e);toast('Error: '+e.message);}
 }
