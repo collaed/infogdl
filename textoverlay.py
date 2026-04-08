@@ -190,6 +190,9 @@ def overlay_text(img: Image.Image, text: str, image_path: str) -> Image.Image:
         draw.text((x, y), line, fill=text_color, font=font)
         y += line_height
 
+    log.info("  📐 Layout: img=%dx%d, text band y=%d→%d (%s), font=%dpx, %d lines, vibe=%s",
+             w, h, y_start, y_start + text_height, position, font_size, len(lines), vibe_name)
+
     return img.convert("RGB")
 
 
