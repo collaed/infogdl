@@ -338,6 +338,11 @@ class Handler(SimpleHTTPRequestHandler):
             else:
                 self._json({"ok": False, "status": "already_running"})
 
+        elif path == "/api/shuffle":
+            # Re-pick images without marking anything as rated
+            Handler.review = build_review(Handler.collection, Handler.queue)
+            self._json({"ok": True})
+
         elif path == "/api/sync":
             sync_profiles_to_ref()
             self._json({"ok": True})
@@ -441,6 +446,7 @@ border-radius:8px;display:none;z-index:99;font-size:13px}
 <div class="hdr"><h1>📊 infogdl</h1><div class="stats" id="st">...</div></div>
 <div class="bar">
 <button class="b1" onclick="scrape()">🔄 Scrape</button>
+<button class="b3" onclick="shuffle()">🔀 Shuffle</button>
 <button class="b3" onclick="sync()">📤 Sync to Ref</button>
 <div style="margin:8px auto;max-width:500px;display:flex;gap:6px">
 <select id="addplat" style="padding:6px;border-radius:6px;border:none;background:#16213e;color:#eee">
@@ -496,6 +502,11 @@ async function scrape(){toast('🔄 Starting scrape...');
 async function sync(){
  await fetch(B+'/api/sync',{method:'POST',headers:{'Content-Type':'application/json'},body:'{}'});
  toast('📤 Synced to ref');
+}
+async function shuffle(){
+ await fetch(B+'/api/shuffle',{method:'POST',headers:{'Content-Type':'application/json'},body:'{}'});
+ R=(await fetch(B+'/api/review').then(r=>r.json()));render();
+ toast('🔀 Fresh picks');
 }
 async function addProfile(){
  let p=document.getElementById('addplat').value;
