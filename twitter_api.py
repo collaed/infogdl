@@ -302,29 +302,16 @@ def _extract_tweet(entry: dict) -> dict | None:
 
 
 def _extract_media_urls(tweet: dict) -> list[str]:
-    """Extract image/video URLs from a tweet object."""
+    """Extract image URLs from a tweet object. Skips videos."""
     urls = []
     try:
         legacy = tweet.get("legacy", tweet)
         entities = legacy.get("extended_entities") or legacy.get("entities", {})
         for media in entities.get("media", []):
-            mtype = media.get("type", "")
-            if mtype == "photo":
+            if media.get("type") == "photo":
                 url = media.get("media_url_https", "")
                 if url:
-                    # Get original resolution
                     urls.append(url + "?format=jpg&name=orig")
-            elif mtype in ("video", "animated_gif"):
-                variants = (media.get("video_info", {})
-                            .get("variants", []))
-                # Pick highest bitrate mp4
-                best = None
-                for v in variants:
-                    if v.get("content_type") == "video/mp4":
-                        if not best or v.get("bitrate", 0) > best.get("bitrate", 0):
-                            best = v
-                if best:
-                    urls.append(best["url"])
     except (KeyError, TypeError):
         pass
     return urls
