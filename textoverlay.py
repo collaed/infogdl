@@ -46,8 +46,9 @@ _CALM_WORDS = {"peace", "balance", "mindful", "gratitude", "patience", "reflect"
                 "breathe", "slow", "rest", "quiet", "simple", "gentle", "nature"}
 
 
-def has_text(img: Image.Image, threshold: float = 0.02) -> bool:
-    """Detect if image likely contains text via horizontal edge density."""
+def has_text(img: Image.Image, threshold: float = 0.08) -> bool:
+    """Detect if image likely contains text via horizontal edge density.
+    Threshold raised to avoid false positives on photos with edges."""
     gray = np.array(img.convert("L").resize((300, 300)), dtype=np.float32)
     h_edges = np.abs(np.diff(gray, axis=1))
     row_activity = (h_edges > 20).sum(axis=1) / h_edges.shape[1]

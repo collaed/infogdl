@@ -352,6 +352,33 @@ class Handler(SimpleHTTPRequestHandler):
             self._refresh()
             self._json({"ok": True, "overlaid": count})
 
+        elif path == "/api/overlay_one":
+            from textoverlay import overlay_text
+            from PIL import Image as PILImage
+            img_path = Path(body.get("img_path", ""))
+            if not img_path.exists():
+                self._json({"ok": False, "error": "image not found"})
+                return
+            sc = img_path.with_suffix(".json")
+            text = ""
+            if sc.exists():
+                try:
+                    meta = json.loads(sc.read_text())
+                    text = (meta.get("text") or meta.get("caption") or "").strip()
+                except Exception:
+                    pass
+            if len(text) < 10:
+                self._json({"ok": False, "error": "no caption text"})
+                return
+            try:
+                img = PILImage.open(img_path)
+                result = overlay_text(img, text, str(img_path))
+                result.save(img_path)
+                img.close()
+                self._json({"ok": True})
+            except Exception as e:
+                self._json({"ok": False, "error": str(e)})
+
         elif path == "/api/sync":
             sync_profiles_to_ref()
             self._json({"ok": True})
@@ -497,7 +524,8 @@ function render(){
   ${s.meta&&s.meta.text?'<br><em>'+s.meta.text.substring(0,120)+'</em>':''}</div>
   <div class="vb"><button class="up" onclick="vote(${i},'up')">👍</button>
   ${skip}
-  <button class="dn" onclick="vote(${i},'down')">👎</button></div></div></div>`;
+  <button class="dn" onclick="vote(${i},'down')">👎</button>
+  <button class="sk" onclick="addText(${i})" title="Add text overlay">📝</button></div></div></div>`;
  }).join('');
 }
 async function vote(i,d){
@@ -532,6 +560,18 @@ async function addProfile(){
 }
 function toast(m){let t=document.getElementById('toast');t.textContent=m;t.style.display='block';
  setTimeout(()=>t.style.display='none',2500);}
+async function addText(i){
+ let s=R[i];
+ let r=await fetch(B+'/api/overlay_one',{method:'POST',headers:{'Content-Type':'application/json'},
+  body:JSON.stringify({img_path:s.path})});
+ let d=await r.json();
+ if(d.ok){
+  // Force reload image by appending cache buster
+  let img=document.querySelector('#c'+i+' img');
+  img.src=img.src.split('?')[0]+'?t='+Date.now();
+  toast('📝 Text added');
+ } else { toast(d.error||'No text available'); }
+}
 async function reanalyze(){
  document.getElementById('btnRe').textContent='⏳ Processing...';
  let r=await fetch(B+'/api/reanalyze',{method:'POST',headers:{'Content-Type':'application/json'},body:'{}'});
