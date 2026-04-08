@@ -49,14 +49,24 @@ def load_cookies(domain: str, cookie_file: str | None = None,
 
 
 def _load_cookie_file(path: str, domain: str) -> dict[str, str]:
-    """Load Netscape-format cookie file."""
+    """Load Netscape-format cookie file — lenient parser."""
+    cookies = {}
     try:
-        cj = http.cookiejar.MozillaCookieJar(path)
-        cj.load(ignore_discard=True, ignore_expires=True)
-        return {c.name: c.value for c in cj if domain in (c.domain or "")}
+        with open(path, "r", encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if not line or line.startswith("#"):
+                    continue
+                parts = line.split("\t")
+                if len(parts) >= 7:
+                    host, _, _, _, _, name, value = parts[:7]
+                    if domain in host:
+                        cookies[name] = value
+        if cookies:
+            log.info("Loaded %d cookies from file for %s", len(cookies), domain)
     except Exception as e:
         log.warning("Failed to load cookie file %s: %s", path, e)
-        return {}
+    return cookies
 
 
 def _extract_from_browser(browser: str, domain: str) -> dict[str, str]:

@@ -9,32 +9,41 @@ REMOTE="root@ecb.pm"
 REMOTE_DATA="/opt/infogdl-data"
 
 mkdir -p "$EXPORT_DIR"
-
-# Copy cookie DB (Firefox locks it)
 cp "$COOKIE_DB" "$EXPORT_DIR/cookies.sqlite" 2>/dev/null || true
 
-# Export X.com cookies to Netscape format
-python3 -c "
-import sqlite3, sys
-db = sqlite3.connect('$EXPORT_DIR/cookies.sqlite')
-lines = ['# Netscape HTTP Cookie File', '']
-for name, value, host, path, secure, expiry in db.execute(
-    'SELECT name, value, host, path, isSecure, expiry FROM moz_cookies WHERE host LIKE \"%x.com%\" OR host LIKE \"%linkedin.com%\" OR host LIKE \"%instagram.com%\"'):
-    secure_str = 'TRUE' if secure else 'FALSE'
-    lines.append(f'{host}\tTRUE\t{path}\t{secure_str}\t{expiry}\t{name}\t{value}')
+# Export cookies to proper Netscape format
+python3 << 'PYEOF'
+import sqlite3
+
+db = sqlite3.connect("/tmp/infogdl_cookies/cookies.sqlite")
+lines = ["# Netscape HTTP Cookie File", "# https://curl.se/docs/http-cookies.html", ""]
+
+domains = ("%x.com%", "%twitter.com%", "%linkedin.com%", "%instagram.com%")
+placeholders = " OR ".join(["host LIKE ?"] * len(domains))
+
+rows = db.execute(
+    f"SELECT host, path, isSecure, expiry, name, value FROM moz_cookies WHERE {placeholders}",
+    domains
+).fetchall()
+
+count = 0
+for host, path, secure, expiry, name, value in rows:
+    if "\t" in value or "\n" in value:
+        continue
+    domain_flag = "TRUE" if host.startswith(".") else "FALSE"
+    secure_flag = "TRUE" if secure else "FALSE"
+    expiry = str(int(expiry)) if expiry else "0"
+    lines.append(f"{host}\t{domain_flag}\t{path}\t{secure_flag}\t{expiry}\t{name}\t{value}")
+    count += 1
+
 db.close()
-open('$EXPORT_DIR/cookies.txt', 'w').write('\n'.join(lines) + '\n')
-print(f'Exported {len(lines)-2} cookies')
-"
+with open("/tmp/infogdl_cookies/cookies.txt", "w") as f:
+    f.write("\n".join(lines) + "\n")
+print(f"Exported {count} cookies")
+PYEOF
 
-# Upload to ecb.pm
 scp -q "$EXPORT_DIR/cookies.txt" "$REMOTE:$REMOTE_DATA/cookies.txt"
-
-# Also sync profile lists and ref data
 rsync -az "$HOME/ref_data_ecb/profiles/" "$REMOTE:$REMOTE_DATA/profiles/" 2>/dev/null || true
 rsync -az "$REMOTE:/root/ref_data_ecb/" "$HOME/ref_data_ecb/" 2>/dev/null || true
-
-# Cleanup
 rm -rf "$EXPORT_DIR"
-
 echo "$(date): Cookie sync complete" >> "$HOME/infogdl/infogdl.log"
