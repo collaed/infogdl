@@ -80,33 +80,26 @@ def _detect_vibe(text: str, seed: int) -> str:
     return best
 
 
-def _find_calmest_region(img: Image.Image, num_bands: int = 5) -> tuple[int, str]:
-    """Find the horizontal band with least color variation.
-    Returns (y_position, 'top'|'center'|'bottom')."""
+def _find_calmest_corner(img: Image.Image) -> str:
+    """Find the corner quadrant with least color variation.
+    Returns 'top-left', 'top-right', 'bottom-left', or 'bottom-right'."""
     small = img.resize((100, 100))
     arr = np.array(small, dtype=np.float32)
     if arr.ndim == 2:
         arr = arr[:, :, np.newaxis]
 
-    h = arr.shape[0]
-    band_h = h // num_bands
-    variances = []
+    h, w = arr.shape[:2]
+    mh, mw = h // 2, w // 2
 
-    for i in range(num_bands):
-        band = arr[i * band_h:(i + 1) * band_h]
-        var = np.var(band)
-        variances.append((var, i))
+    corners = {
+        "top-left": arr[:mh, :mw],
+        "top-right": arr[:mh, mw:],
+        "bottom-left": arr[mh:, :mw],
+        "bottom-right": arr[mh:, mw:],
+    }
 
-    variances.sort()
-    best_band = variances[0][1]
-
-    # Map band index to position
-    if best_band <= 1:
-        return best_band * band_h, "top"
-    elif best_band >= num_bands - 2:
-        return best_band * band_h, "bottom"
-    else:
-        return best_band * band_h, "center"
+    best = min(corners, key=lambda k: np.var(corners[k]))
+    return best
 
 
 def _contrast_color(img: Image.Image, y_start: int, y_end: int) -> tuple:
@@ -128,23 +121,33 @@ def overlay_text(img: Image.Image, text: str, image_path: str) -> Image.Image:
     seed = int(hashlib.md5(image_path.encode()).hexdigest(), 16)
     w, h = img.size
 
+    # Clean text: remove URLs, trailing whitespace
+    import re
+    text = re.sub(r'https?://\S+', '', text).strip()
+    text = re.sub(r'\s+', ' ', text).strip()
+    if len(text) < 10:
+        return img
+
     # Detect vibe from text
     vibe_name = _detect_vibe(text, seed)
     vibe = _VIBES[vibe_name]
     vibe_text_color, accent_color, bg_alpha = vibe
 
-    # Find calmest region for placement
-    band_y, position = _find_calmest_region(img)
+    # Find calmest corner
+    corner = _find_calmest_corner(img)
+    padding = int(min(w, h) * 0.03)
 
-    # Auto-size font: shrink until all text fits in max 60% of image height
-    max_text_h = int(h * 0.6)
-    padding = int(min(w, h) * 0.04)
-    font_size = int(min(w, h) * 0.04)
-    font_size = max(10, min(font_size, 44))
+    # Text goes in a narrow column (40% of width) in the chosen corner
+    col_width = int(w * 0.4)
+
+    # Auto-size font to fit all text in the column, max 80% of height
+    max_text_h = int(h * 0.8)
+    font_size = int(min(w, h) * 0.035)
+    font_size = max(10, min(font_size, 40))
 
     while font_size >= 8:
         font = _get_font(font_size)
-        chars_per_line = max(15, int(w * 0.9 / (font_size * 0.52)))
+        chars_per_line = max(10, int(col_width / (font_size * 0.55)))
         lines = textwrap.wrap(text, width=chars_per_line)
         line_height = font_size + 3
         text_height = len(lines) * line_height
@@ -152,53 +155,44 @@ def overlay_text(img: Image.Image, text: str, image_path: str) -> Image.Image:
             break
         font_size -= 1
 
-    # Position text block in the calmest region
-    if position == "top":
+    # Corner positioning
+    if "left" in corner:
+        x_start = padding
+    else:
+        x_start = w - col_width - padding
+
+    if "top" in corner:
         y_start = padding
-    elif position == "center":
-        y_start = (h - text_height) // 2
     else:
         y_start = h - text_height - padding * 2
 
     y_start = max(padding, min(y_start, h - text_height - padding))
 
-    # Text color: contrast against the actual overlay band (dark bg + original blended)
-    # The band is black at bg_alpha/255 opacity over the original image
-    y_end = min(h, y_start + text_height + padding * 2)
-    orig_brightness = _contrast_color(img, y_start, y_end)  # returns light or dark
-    # Simulate what the band looks like after compositing
-    band_brightness = (1 - bg_alpha / 255) * (orig_brightness[0] * 0.299 + orig_brightness[1] * 0.587 + orig_brightness[2] * 0.114)
-    # Always pick text that contrasts with the composited band
-    if band_brightness > 100:
-        # Rare: light image + low opacity band = still light → use dark vibe text
-        text_color = tuple(max(0, int(v * 0.3)) for v in vibe_text_color)
-    else:
-        # Common: dark band → use bright vibe text
-        text_color = tuple(min(255, int(v * 0.6 + 255 * 0.4)) for v in vibe_text_color)
+    # Text color: bright on dark overlay
+    text_color = tuple(min(255, int(v * 0.6 + 255 * 0.4)) for v in vibe_text_color)
 
-    # Draw background band
+    # Draw semi-transparent background in corner
     overlay = Image.new("RGBA", img.size, (0, 0, 0, 0))
     draw_ov = ImageDraw.Draw(overlay)
-    bg_rect = [0, y_start - padding, w, y_start + text_height + padding]
+    bg_rect = [x_start - padding, y_start - padding,
+               x_start + col_width + padding, y_start + text_height + padding]
     draw_ov.rectangle(bg_rect, fill=(0, 0, 0, bg_alpha))
 
     if img.mode != "RGBA":
         img = img.convert("RGBA")
     img = Image.alpha_composite(img, overlay)
 
-    # Draw all lines — no truncation
+    # Draw text lines — left-aligned in the column
     draw = ImageDraw.Draw(img)
     y = y_start
     for line in lines:
-        bbox = draw.textbbox((0, 0), line, font=font)
-        tw = bbox[2] - bbox[0]
-        x = (w - tw) // 2
-        draw.text((x + 1, y + 1), line, fill=(0, 0, 0, 180), font=font)
-        draw.text((x, y), line, fill=text_color, font=font)
+        draw.text((x_start + 1, y + 1), line, fill=(0, 0, 0, 180), font=font)
+        draw.text((x_start, y), line, fill=text_color, font=font)
         y += line_height
 
-    log.info("  📐 Layout: img=%dx%d, text band y=%d→%d (%s), font=%dpx, %d lines, vibe=%s",
-             w, h, y_start, y_start + text_height, position, font_size, len(lines), vibe_name)
+    log.info("  📐 Layout: img=%dx%d, corner=%s, col x=%d w=%d, y=%d→%d, font=%dpx, %d lines, vibe=%s",
+             w, h, corner, x_start, col_width, y_start, y_start + text_height,
+             font_size, len(lines), vibe_name)
 
     return img.convert("RGB")
 
