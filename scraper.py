@@ -26,6 +26,7 @@ from progress import ProgressTracker
 from gdl_compat import load_gallery_dl_config, extract_cookie_source
 from useragent import get_session_ua
 from metadata import format_filename, build_metadata, save_sidecar, DEFAULT_FMT
+from textoverlay import process_overlay
 
 log = logging.getLogger(__name__)
 
@@ -328,6 +329,7 @@ def _scrape_instagram_api(url: str, cookies: dict, pkey: str,
         meta = build_metadata("instagram", username, item, img_url)
         meta["caption"] = item.get("caption", "")
         save_sidecar(fname, meta)
+        process_overlay(fname)
 
         if tracker:
             tracker.record(pkey, img_url, item["ts"])
@@ -399,6 +401,7 @@ def _scrape_linkedin_api(url: str, cookies: dict, pkey: str,
 
         meta = build_metadata("linkedin", public_id, item, img_url)
         save_sidecar(fname, meta)
+        process_overlay(fname)
 
         if tracker:
             tracker.record(pkey, img_url, item["ts"])
@@ -467,6 +470,7 @@ def _scrape_twitter_api(url: str, cookies: dict, pkey: str,
         # Metadata sidecar
         meta = build_metadata("twitter", screen_name, item, img_url)
         save_sidecar(fname, meta)
+        process_overlay(fname)
 
         if tracker:
             tracker.record(pkey, img_url, item["ts"])

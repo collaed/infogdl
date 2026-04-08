@@ -16,6 +16,7 @@ from sorter import sort_path
 from resize import process
 from progress import ProgressTracker
 from metadata import detect_source, save_sidecar
+from textoverlay import process_overlay
 
 logging.basicConfig(
     level=logging.INFO,
@@ -113,6 +114,7 @@ def _analyze_and_sort(fpath: Path, out_dir: Path, cfg: dict,
             "output_size": out_size,
         })
         save_sidecar(final_path, source)
+        process_overlay(final_path)
 
     if delete:
         fpath.unlink()
