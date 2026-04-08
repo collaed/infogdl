@@ -66,6 +66,7 @@ class TwitterAPI:
 
         auth_token = cookies.get("auth_token")
 
+        from useragent import get_session_ua
         self.headers = {
             "Accept": "*/*",
             "Referer": "https://x.com/",
@@ -75,9 +76,7 @@ class TwitterAPI:
             "x-twitter-client-language": "en",
             "x-twitter-active-user": "yes",
             "authorization": _BEARER,
-            "User-Agent": ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-                           "AppleWebKit/537.36 (KHTML, like Gecko) "
-                           "Chrome/124.0.0.0 Safari/537.36"),
+            "User-Agent": get_session_ua(),
         }
         self._root = "https://x.com/i/api"
 
@@ -198,6 +197,7 @@ class TwitterAPI:
                                         "url": url,
                                         "tweet_id": tweet_id,
                                         "ts": time.time(),
+                                        "_tweet": tweet,
                                     })
                                 tweets_found += 1
                     continue
@@ -215,6 +215,7 @@ class TwitterAPI:
                             "url": url,
                             "tweet_id": tweet_id,
                             "ts": time.time(),
+                            "_tweet": tweet,
                         })
                     tweets_found += 1
 

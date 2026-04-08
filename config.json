@@ -6,6 +6,7 @@
     "max_file_size_kb": 500,
     "cookie_file": null,
     "browser": "firefox",
+    "filename_fmt": "{platform}_{author}_{id}_{num:04d}.{ext}",
     "color_bins": {
         "low": [0, 5],
         "medium": [6, 15],

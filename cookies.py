@@ -231,3 +231,20 @@ class _safe_sqlite:
             self.conn.close()
         if self.tmpdir:
             self.tmpdir.cleanup()
+
+
+def export_cookies(cookies: dict[str, str], domain: str,
+                   path: str | None = None) -> str | None:
+    """Export cookies to Netscape format file. Returns path written."""
+    if not cookies or not path:
+        return None
+    try:
+        lines = ["# Netscape HTTP Cookie File", ""]
+        for name, value in cookies.items():
+            lines.append(f".{domain}\tTRUE\t/\tFALSE\t0\t{name}\t{value}")
+        Path(path).write_text("\n".join(lines) + "\n", encoding="utf-8")
+        log.info("Exported %d cookies to %s", len(cookies), path)
+        return path
+    except Exception as e:
+        log.warning("Failed to export cookies: %s", e)
+        return None

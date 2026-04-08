@@ -21,15 +21,16 @@ from selenium.webdriver.chrome.options import Options
 import requests
 from requests.adapters import HTTPAdapter, Retry
 
-from cookies import load_cookies
+from cookies import load_cookies, export_cookies
 from progress import ProgressTracker
 from gdl_compat import load_gallery_dl_config, extract_cookie_source
+from useragent import get_session_ua
+from metadata import format_filename, build_metadata, save_sidecar, DEFAULT_FMT
 
 log = logging.getLogger(__name__)
 
 SESSION_CACHE = Path(".sessions")
-_UA = ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-       "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36")
+_UA = get_session_ua()
 
 
 def _profile_key(platform: str, url: str) -> str:
@@ -298,6 +299,7 @@ def _scrape_linkedin_api(url: str, cookies: dict, pkey: str,
     session = _make_session(cookies)
     downloaded = []
     download_dir.mkdir(parents=True, exist_ok=True)
+    filename_fmt = _get_filename_fmt()
 
     for i, item in enumerate(items):
         img_url = item["url"]
@@ -309,16 +311,26 @@ def _scrape_linkedin_api(url: str, cookies: dict, pkey: str,
             continue
 
         ext = _guess_ext(resp.headers.get("content-type", ""), img_url)
-        fname = download_dir / f"li_{i:04d}{ext}"
+        fname_str = format_filename(filename_fmt,
+            platform="linkedin", author=public_id,
+            id=item.get("post_urn", "").split(":")[-1] or f"li{i}",
+            num=i, ext=ext.lstrip("."),
+            date=time.strftime("%Y-%m-%d"))
+        fname = download_dir / fname_str
         fname.write_bytes(resp.content)
         downloaded.append(fname)
         log.info("📥 [linkedin] %d/%d  %s  (%.0f KB)",
                  i + 1, len(items), fname.name, len(resp.content) / 1024)
 
+        meta = build_metadata("linkedin", public_id, item, img_url)
+        save_sidecar(fname, meta)
+
         if tracker:
             tracker.record(pkey, img_url, item["ts"])
 
         time.sleep(random.uniform(0.5, 1.5))
+
+    _export_session_cookies(cookies, "linkedin.com")
 
     return downloaded
 
@@ -355,6 +367,7 @@ def _scrape_twitter_api(url: str, cookies: dict, pkey: str,
     session = _make_session(cookies)
     downloaded = []
     download_dir.mkdir(parents=True, exist_ok=True)
+    filename_fmt = _get_filename_fmt()
 
     for i, item in enumerate(items):
         img_url = item["url"]
@@ -366,16 +379,27 @@ def _scrape_twitter_api(url: str, cookies: dict, pkey: str,
             continue
 
         ext = _guess_ext(resp.headers.get("content-type", ""), img_url)
-        fname = download_dir / f"{item.get('tweet_id', 'img')}_{i:04d}{ext}"
+        fname_str = format_filename(filename_fmt,
+            platform="twitter", author=screen_name,
+            id=item.get("tweet_id", "img"), num=i, ext=ext.lstrip("."),
+            date=time.strftime("%Y-%m-%d"))
+        fname = download_dir / fname_str
         fname.write_bytes(resp.content)
         downloaded.append(fname)
         log.info("📥 [twitter] %d/%d  %s  (%.0f KB)",
                  i + 1, len(items), fname.name, len(resp.content) / 1024)
 
+        # Metadata sidecar
+        meta = build_metadata("twitter", screen_name, item, img_url)
+        save_sidecar(fname, meta)
+
         if tracker:
             tracker.record(pkey, img_url, item["ts"])
 
         time.sleep(random.uniform(0.5, 1.5))
+
+    # Export updated cookies
+    _export_session_cookies(cookies, "x.com")
 
     return downloaded
 
@@ -588,3 +612,26 @@ def _guess_ext(content_type: str, url: str) -> str:
         if path.endswith(ext):
             return ext
     return ".jpg"
+
+
+def _get_filename_fmt() -> str:
+    """Load filename format from config, or use default."""
+    try:
+        import json
+        with open("config.json") as f:
+            return json.load(f).get("filename_fmt", DEFAULT_FMT)
+    except Exception:
+        return DEFAULT_FMT
+
+
+def _export_session_cookies(cookies: dict, domain: str):
+    """Export cookies after a successful session."""
+    try:
+        import json
+        with open("config.json") as f:
+            cfg = json.load(f)
+        cookie_file = cfg.get("cookie_file")
+        if cookie_file:
+            export_cookies(cookies, domain, cookie_file)
+    except Exception:
+        pass
