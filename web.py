@@ -580,10 +580,9 @@ async function addText(i){
   console.log('response',r.status);
   let d=await r.json();
   if(d.ok){
-   let img=document.querySelector('#c'+i+' img');
-   img.src=img.src;  // force reload via no-cache headers
-   setTimeout(()=>{img.src=img.src},500);  // double-tap for stubborn browsers
-   toast('📝 Text added ('+d.size+'B): '+d.text_preview);
+   toast('📝 Text added ('+d.size+'B)');
+   // Full reload to bypass cache
+   setTimeout(()=>window.location.reload(),500);
   } else { toast('❌ '+d.error); }
  }catch(e){console.error(e);toast('Error: '+e.message);}
 }
