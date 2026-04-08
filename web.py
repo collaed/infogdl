@@ -266,6 +266,33 @@ class Handler(SimpleHTTPRequestHandler):
         elif path == "/api/sync":
             sync_profiles_to_ref()
             self._json({"ok": True})
+
+        elif path == "/api/add_profile":
+            platform = body.get("platform", "")
+            handle = body.get("handle", "").strip().lstrip("@")
+            if not handle or not platform:
+                self._json({"ok": False, "error": "missing fields"})
+                return
+            # Build profile line
+            line = f"{platform} @{handle}"
+            # Pick the right file
+            profiles_dir = DATA_DIR / "profiles"
+            target = None
+            for f in profiles_dir.glob("*.txt"):
+                if platform in f.name.lower() or (platform == "twitter" and "x-" in f.name.lower()):
+                    target = f
+                    break
+            if not target:
+                target = profiles_dir / f"{platform}-profiles.txt"
+            # Check for duplicates
+            existing = target.read_text() if target.exists() else ""
+            if handle.lower() in existing.lower():
+                self._json({"ok": False, "error": f"{handle} already in list"})
+                return
+            with open(target, "a") as fh:
+                fh.write(f"\n{line}\n")
+            log.info("➕ Added %s @%s to %s", platform, handle, target.name)
+            self._json({"ok": True})
         else:
             self.send_error(404)
 
@@ -341,6 +368,12 @@ border-radius:8px;display:none;z-index:99;font-size:13px}
 <button class="b1" onclick="scrape()">🔄 Scrape</button>
 <button class="b2" onclick="apply()">✅ Apply Votes</button>
 <button class="b3" onclick="sync()">📤 Sync to Ref</button>
+<div style="margin:8px auto;max-width:500px;display:flex;gap:6px">
+<select id="addplat" style="padding:6px;border-radius:6px;border:none;background:#16213e;color:#eee">
+<option value="twitter">Twitter</option><option value="linkedin">LinkedIn</option><option value="instagram">Instagram</option></select>
+<input id="addhandle" placeholder="@handle or slug" style="flex:1;padding:6px;border-radius:6px;border:none;background:#16213e;color:#eee">
+<button class="b1" onclick="addProfile()">➕ Add</button>
+</div>
 </div>
 <div id="cards"></div>
 <div class="toast" id="toast"></div>
@@ -389,6 +422,16 @@ async function apply(){if(!confirm('Apply votes?'))return;
 async function sync(){
  await fetch(B+'/api/sync',{method:'POST',headers:{'Content-Type':'application/json'},body:'{}'});
  toast('📤 Synced to ref');
+}
+async function addProfile(){
+ let p=document.getElementById('addplat').value;
+ let h=document.getElementById('addhandle').value.trim().replace(/^@/,'');
+ if(!h){toast('Enter a handle');return}
+ let r=await fetch(B+'/api/add_profile',{method:'POST',headers:{'Content-Type':'application/json'},
+  body:JSON.stringify({platform:p,handle:h})});
+ let d=await r.json();
+ document.getElementById('addhandle').value='';
+ toast(d.ok?'➕ Added '+h:'❌ '+d.error);
 }
 function toast(m){let t=document.getElementById('toast');t.textContent=m;t.style.display='block';
  setTimeout(()=>t.style.display='none',2500);}
