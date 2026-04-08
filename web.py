@@ -358,7 +358,7 @@ function render(){
  let el=document.getElementById('cards');
  if(!R.length){el.innerHTML='<p style="text-align:center;padding:30px;color:#555">All reviewed! Hit 🔄 Scrape for more.</p>';return}
  el.innerHTML=R.map((s,i)=>`<div class="card" id="c${i}">
-  <img src="'+B+'/img/${encodeURIComponent(s.rel)}" loading="lazy">
+  <img src="${B}/img/${encodeURIComponent(s.rel)}" loading="lazy">
   <div class="ci"><div class="cm"><span class="a">${s.profile_key}</span><br>${s.name} · ${Math.round(s.size_kb)}KB
   ${s.meta&&s.meta.text?'<br><em>'+s.meta.text.substring(0,120)+'</em>':''}</div>
   <div class="vb"><button class="up" onclick="vote(${i},'up')">👍</button>
