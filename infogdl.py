@@ -5,6 +5,7 @@ import logging
 import argparse
 import time
 import random
+import sys
 from pathlib import Path
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from PIL import Image
@@ -246,6 +247,10 @@ def run(cfg: dict, full_rescan: bool = False,
     log.info("═" * 60)
     tracker.close()
 
+    # Interactive voting session
+    if profiles and sys.stdin.isatty():
+        _voting_session(profiles, cfg)
+
 
 IMAGE_EXTS = {".png", ".jpg", ".jpeg", ".webp", ".gif", ".bmp", ".tiff", ".tif"}
 
@@ -335,6 +340,153 @@ def _load_profile_lists(paths: list[str]) -> list[dict]:
                 profiles.append({"platform": platform, "url": target})
     log.info("Loaded %d profiles from %d file(s)", len(profiles), len(paths))
     return profiles
+
+
+_SUGGESTIONS = {
+    "twitter": [
+        ("@visualizevalue", "Jack Butcher — minimalist concept art"),
+        ("@george__mack", "George Mack — contrarian thinking visuals"),
+        ("@waitbutwhy", "Tim Urban — visual explainers"),
+        ("@profgalloway", "Scott Galloway — business/life visual takes"),
+        ("@hubermanlab", "Andrew Huberman — neuroscience infographics"),
+        ("@PeterAttiaMD", "Peter Attia — longevity visual breakdowns"),
+        ("@dailystoic", "Daily Stoic — stoicism infographics"),
+        ("@AmuseChimp", "Amuse Chimp — philosophy/psychology visuals"),
+        ("@sahaboross", "Sahil Lavinia — design thinking visuals"),
+        ("@david_perell", "David Perell — writing/thinking frameworks"),
+    ],
+    "linkedin": [
+        ("pascalbornet", "Pascal Bornet — AI/automation infographics"),
+        ("bernardmarr", "Bernard Marr — tech trends visual explainers"),
+        ("chiphuyen", "Chip Huyen — AI infra, MLOps visuals"),
+        ("ricardovargas", "Ricardo Vargas — PM visual frameworks"),
+        ("yourskysec", "Stéphane Nappo — CISO, cybersec infographics"),
+        ("troyhunt", "Troy Hunt — security visuals"),
+        ("henrikjkniberg", "Henrik Kniberg — agile/lean visual thinker"),
+        ("claireagutter", "Claire Agutter — ITIL/VeriSM visual educator"),
+        ("louisbouchard", "Louis Bouchard — AI explained visually"),
+        ("danielmiessler", "Daniel Miessler — security frameworks"),
+    ],
+}
+
+
+def _voting_session(current_profiles: list[dict], cfg: dict):
+    """Interactive voting: suggest 2 profiles to add, vote 2 to remove."""
+    print("\n" + "─" * 60)
+    print("📊 PROFILE VOTING SESSION")
+    print("─" * 60)
+
+    # Find which profile list files are in use
+    profile_files = _find_profile_files()
+    if not profile_files:
+        print("No profile list files found to update. Skipping vote.")
+        return
+
+    # --- SUGGESTIONS TO ADD ---
+    print("\n🆕 Suggested profiles to ADD (based on popular infographic creators):\n")
+    current_urls = {p["url"] for p in current_profiles}
+    suggestions = []
+    for platform in ("twitter", "linkedin"):
+        for handle, desc in _SUGGESTIONS.get(platform, []):
+            if platform == "twitter":
+                url = f"https://x.com/{handle.lstrip('@')}/media"
+            else:
+                url = f"https://www.linkedin.com/in/{handle}/recent-activity/shares/"
+            if url not in current_urls:
+                suggestions.append((platform, handle, desc, url))
+
+    random.shuffle(suggestions)
+    candidates = suggestions[:4]  # show 4, user picks 2
+
+    if not candidates:
+        print("  No new suggestions available.")
+    else:
+        for i, (plat, handle, desc, _) in enumerate(candidates, 1):
+            icon = "🐦" if plat == "twitter" else "🔗"
+            print(f"  {i}. {icon} {handle} — {desc}")
+
+        picks = input("\nEnter numbers to ADD (e.g. '1 3'), or Enter to skip: ").strip()
+        if picks:
+            for ch in picks.split():
+                try:
+                    idx = int(ch) - 1
+                    plat, handle, desc, url = candidates[idx]
+                    line = f"{plat} @{handle.lstrip('@')}  # {desc}"
+                    _append_to_profile_file(profile_files, plat, line)
+                    print(f"  ✅ Added {handle}")
+                except (ValueError, IndexError):
+                    pass
+
+    # --- VOTE TO REMOVE ---
+    print("\n🗑️  Vote to REMOVE profiles (worst results this run):\n")
+    # Show current profiles numbered
+    shown = []
+    for i, p in enumerate(current_profiles[:20], 1):
+        plat = p["platform"]
+        url = p["url"]
+        # Extract handle from URL
+        if plat == "twitter":
+            handle = url.rstrip("/").split("/")[-2]
+        else:
+            parts = url.split("/in/")
+            handle = parts[1].split("/")[0] if len(parts) > 1 else url
+        icon = "🐦" if plat == "twitter" else "🔗"
+        print(f"  {i}. {icon} @{handle}")
+        shown.append((plat, handle, url))
+
+    picks = input("\nEnter numbers to REMOVE (e.g. '2 5'), or Enter to skip: ").strip()
+    if picks:
+        to_remove = set()
+        for ch in picks.split():
+            try:
+                idx = int(ch) - 1
+                plat, handle, url = shown[idx]
+                to_remove.add(handle.lower())
+                print(f"  ❌ Removing @{handle}")
+            except (ValueError, IndexError):
+                pass
+        if to_remove:
+            _remove_from_profile_files(profile_files, to_remove)
+
+    print("\n" + "─" * 60)
+
+
+def _find_profile_files() -> list[Path]:
+    """Find .txt profile list files in profiles/ dir."""
+    p = Path("profiles")
+    if p.is_dir():
+        return sorted(p.glob("*.txt"))
+    return []
+
+
+def _append_to_profile_file(files: list[Path], platform: str, line: str):
+    """Append a profile line to the matching platform file."""
+    target = None
+    for f in files:
+        if platform == "twitter" and "x-" in f.name.lower():
+            target = f
+        elif platform == "linkedin" and "linkedin" in f.name.lower():
+            target = f
+    if not target:
+        target = files[0]  # fallback to first file
+    with open(target, "a") as fh:
+        fh.write(f"\n{line}\n")
+
+
+def _remove_from_profile_files(files: list[Path], handles: set[str]):
+    """Remove lines matching any of the handles from all profile files."""
+    for f in files:
+        lines = f.read_text().splitlines()
+        kept = []
+        for line in lines:
+            stripped = line.split("#")[0].strip()
+            parts = stripped.split(None, 1)
+            if len(parts) == 2:
+                handle = parts[1].lstrip("@").split("/")[0].lower()
+                if handle in handles:
+                    continue
+            kept.append(line)
+        f.write_text("\n".join(kept) + "\n")
 
 
 def main():
