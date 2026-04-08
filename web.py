@@ -359,7 +359,7 @@ class Handler(SimpleHTTPRequestHandler):
             img_path = Path(body.get("img_path", ""))
             log.info("📝 Overlay request for %s", img_path)
             if not img_path.exists():
-                log.warning("Image not found: %s", img_path)
+                log.warning("  ❌ Image not found: %s", img_path)
                 self._json({"ok": False, "error": "image not found"})
                 return
             sc = img_path.with_suffix(".json")
@@ -370,16 +370,22 @@ class Handler(SimpleHTTPRequestHandler):
                     text = (meta.get("text") or meta.get("caption") or "").strip()
                 except Exception:
                     pass
+            log.info("  📄 Sidecar: %s, text: %d chars", sc.exists(), len(text))
             if len(text) < 10:
+                log.warning("  ⚠ No caption text (< 10 chars)")
                 self._json({"ok": False, "error": "no caption text"})
                 return
             try:
                 img = PILImage.open(img_path)
+                log.info("  🖼 Image: %s, %dx%d", img.mode, img.size[0], img.size[1])
                 result = overlay_text(img, text, str(img_path))
-                result.save(img_path)
+                result.save(img_path, quality=95)
+                new_size = img_path.stat().st_size
+                log.info("  ✅ Overlay saved: %d bytes, text: %s...", new_size, text[:60])
                 img.close()
-                self._json({"ok": True})
+                self._json({"ok": True, "size": new_size, "text_preview": text[:80]})
             except Exception as e:
+                log.error("  ❌ Overlay failed: %s", e, exc_info=True)
                 self._json({"ok": False, "error": str(e)})
 
         elif path == "/api/sync":
@@ -574,8 +580,8 @@ async function addText(i){
   if(d.ok){
    let img=document.querySelector('#c'+i+' img');
    img.src=img.src.split('?')[0]+'?t='+Date.now();
-   toast('📝 Text added');
-  } else { toast(d.error||'No text available'); }
+   toast('📝 Text added ('+d.size+'B): '+d.text_preview);
+  } else { toast('❌ '+d.error); }
  }catch(e){console.error(e);toast('Error: '+e.message);}
 }
 async function reanalyze(){
