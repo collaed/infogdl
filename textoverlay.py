@@ -162,12 +162,9 @@ def overlay_text(img: Image.Image, text: str, image_path: str) -> Image.Image:
 
     y_start = max(padding, min(y_start, h - text_height - padding))
 
-    # Get contrast color for the actual placement region
-    y_end = min(h, y_start + text_height + padding * 2)
-    auto_color = _contrast_color(img, y_start, y_end)
-
-    # Blend vibe color with contrast color
-    text_color = tuple(int(v * 0.4 + a * 0.6) for v, a in zip(vibe_text_color, auto_color))
+    # Text color: overlay band is always dark, so always use light text
+    # Blend vibe color with white for readability on dark band
+    text_color = tuple(int(v * 0.6 + 255 * 0.4) for v in vibe_text_color)
 
     # Draw background band
     overlay = Image.new("RGBA", img.size, (0, 0, 0, 0))
