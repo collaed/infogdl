@@ -300,6 +300,7 @@ class Handler(SimpleHTTPRequestHandler):
 
     def do_POST(self):
         path = urlparse(self.path).path
+        log.info("POST %s", path)
         body = {}
         length = int(self.headers.get("Content-Length", 0))
         if length:
@@ -356,7 +357,9 @@ class Handler(SimpleHTTPRequestHandler):
             from textoverlay import overlay_text
             from PIL import Image as PILImage
             img_path = Path(body.get("img_path", ""))
+            log.info("📝 Overlay request for %s", img_path)
             if not img_path.exists():
+                log.warning("Image not found: %s", img_path)
                 self._json({"ok": False, "error": "image not found"})
                 return
             sc = img_path.with_suffix(".json")
@@ -562,15 +565,18 @@ function toast(m){let t=document.getElementById('toast');t.textContent=m;t.style
  setTimeout(()=>t.style.display='none',2500);}
 async function addText(i){
  let s=R[i];
- let r=await fetch(B+'/api/overlay_one',{method:'POST',headers:{'Content-Type':'application/json'},
-  body:JSON.stringify({img_path:s.path})});
- let d=await r.json();
- if(d.ok){
-  // Force reload image by appending cache buster
-  let img=document.querySelector('#c'+i+' img');
-  img.src=img.src.split('?')[0]+'?t='+Date.now();
-  toast('📝 Text added');
- } else { toast(d.error||'No text available'); }
+ console.log('addText',i,s.path);
+ try{
+  let r=await fetch(B+'/api/overlay_one',{method:'POST',headers:{'Content-Type':'application/json'},
+   body:JSON.stringify({img_path:s.path}),credentials:'same-origin'});
+  console.log('response',r.status);
+  let d=await r.json();
+  if(d.ok){
+   let img=document.querySelector('#c'+i+' img');
+   img.src=img.src.split('?')[0]+'?t='+Date.now();
+   toast('📝 Text added');
+  } else { toast(d.error||'No text available'); }
+ }catch(e){console.error(e);toast('Error: '+e.message);}
 }
 async function reanalyze(){
  document.getElementById('btnRe').textContent='⏳ Processing...';
