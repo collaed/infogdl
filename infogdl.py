@@ -54,23 +54,22 @@ def _check_limits(out_dir: Path, limits: dict[str, float]) -> dict[str, bool]:
 def _analyze_and_sort(fpath: Path, out_dir: Path, cfg: dict,
                       delete: bool = False,
                       invert_threshold: float | None = None,
-                      limits: dict[str, float] | None = None) -> str | None:
+                      limits: dict[str, float] | None = None) -> tuple[str | None, int, int]:
     """Analyze, sort, crop, resize, and compress a single image.
-    Returns orientation or None if skipped due to limit."""
+    Returns (orientation, original_bytes, output_bytes) or (None, 0, 0) if skipped."""
     try:
         img = Image.open(fpath)
     except Exception as e:
         log.warning("Cannot open %s: %s", fpath, e)
-        return None
+        return None, 0, 0
 
     info = analyze(img)
 
-    # Check storage limit before writing
     if limits:
         full = _check_limits(out_dir, limits)
         if full.get(info["orientation"], False):
             img.close()
-            return None
+            return None, 0, 0
 
     subfolder = sort_path(
         info["orientation"], info["colors"], info["fill_rate"],
@@ -78,19 +77,39 @@ def _analyze_and_sort(fpath: Path, out_dir: Path, cfg: dict,
     )
     dest_dir = out_dir / subfolder
     dest_dir.mkdir(parents=True, exist_ok=True)
-    process(img, dest_dir / fpath.name,
+    dest_path = dest_dir / fpath.name
+    orig_size = fpath.stat().st_size
+    process(img, dest_path,
             cfg["target_width"], cfg["target_height"], cfg["max_file_size_kb"],
             invert_threshold=invert_threshold)
     img.close()
 
+    # Output file might have a different extension after compression
+    out_size = dest_path.stat().st_size if dest_path.exists() else 0
+    if not out_size:
+        # Check .jpg variant (compress_if_needed may change extension)
+        jpg_path = dest_path.with_suffix(".jpg")
+        if jpg_path.exists():
+            out_size = jpg_path.stat().st_size
+
+    saved_pct = (1 - out_size / orig_size) * 100 if orig_size else 0
+    log.info("✅ %s -> %s/ | %s → %s (%.0f%% saved) | colors=%d fill=%.2f %s",
+             fpath.name, subfolder,
+             _fmt_size(orig_size), _fmt_size(out_size), saved_pct,
+             info["colors"], info["fill_rate"], info["orientation"])
+
     if delete:
         fpath.unlink()
-        log.info("%s -> %s/ (deleted original)", fpath.name, subfolder)
-    else:
-        log.info("%s -> %s/ (colors=%d, fill=%.2f, %s)",
-                 fpath.name, subfolder, info["colors"],
-                 info["fill_rate"], info["orientation"])
-    return info["orientation"]
+
+    return info["orientation"], orig_size, out_size
+
+
+def _fmt_size(b: int) -> str:
+    if b < 1024:
+        return f"{b}B"
+    if b < 1024 * 1024:
+        return f"{b/1024:.0f}KB"
+    return f"{b/(1024*1024):.1f}MB"
 
 
 def _scrape_one(profile: dict, cfg: dict, raw_dir: Path,
@@ -196,24 +215,35 @@ def run(cfg: dict, full_rescan: bool = False,
 
     # Process images (check limits after each)
     processed = {"vertical": 0, "horizontal": 0}
-    skipped = 0
+    total_orig = total_out = skipped = 0
     for fpath in all_files:
-        # Early exit if both orientations are full
         if limits:
             full = _check_limits(out_dir, limits)
             if all(full.values()):
                 log.info("All storage limits reached. Stopping.")
                 break
 
-        orient = _analyze_and_sort(fpath, out_dir, cfg,
-                                   invert_threshold=invert_threshold,
-                                   limits=limits)
+        orient, orig, out = _analyze_and_sort(fpath, out_dir, cfg,
+                                              invert_threshold=invert_threshold,
+                                              limits=limits)
         if orient:
             processed[orient] = processed.get(orient, 0) + 1
+            total_orig += orig
+            total_out += out
         else:
             skipped += 1
 
-    log.info("Done. Processed: %s. Skipped (limit): %d", processed, skipped)
+    saved = total_orig - total_out
+    pct = (saved / total_orig * 100) if total_orig else 0
+    log.info("═" * 60)
+    log.info("Run complete: %d images processed, %d skipped",
+             sum(processed.values()), skipped)
+    log.info("  Vertical: %d  |  Horizontal: %d",
+             processed.get("vertical", 0), processed.get("horizontal", 0))
+    log.info("  Original total:  %s", _fmt_size(total_orig))
+    log.info("  Output total:    %s", _fmt_size(total_out))
+    log.info("  Space saved:     %s (%.0f%%)", _fmt_size(saved), pct)
+    log.info("═" * 60)
     tracker.close()
 
 
@@ -238,14 +268,28 @@ def process_local(cfg: dict, input_dir: str, output_dir: str | None,
     files = collect_images(src)
     log.info("Found %d images in %s", len(files), src)
 
+    total_orig = total_out = count = 0
     for fpath in files:
         if limits:
             full = _check_limits(out_dir, limits)
             if all(full.values()):
                 log.info("All storage limits reached. Stopping.")
                 break
-        _analyze_and_sort(fpath, out_dir, cfg, delete=delete,
-                          invert_threshold=invert_threshold, limits=limits)
+        orient, orig, out = _analyze_and_sort(fpath, out_dir, cfg, delete=delete,
+                                              invert_threshold=invert_threshold, limits=limits)
+        if orient:
+            total_orig += orig
+            total_out += out
+            count += 1
+
+    saved = total_orig - total_out
+    pct = (saved / total_orig * 100) if total_orig else 0
+    log.info("═" * 60)
+    log.info("Run complete: %d images processed", count)
+    log.info("  Original total:  %s", _fmt_size(total_orig))
+    log.info("  Output total:    %s", _fmt_size(total_out))
+    log.info("  Space saved:     %s (%.0f%%)", _fmt_size(saved), pct)
+    log.info("═" * 60)
 
 
 def _parse_limits(val: str) -> dict[str, float]:
