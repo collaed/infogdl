@@ -30,6 +30,8 @@ VOTES_FILE = DATA_DIR / "votes.json"
 QUEUE_FILE = DATA_DIR / "queue.json"
 MAX_PER_PROFILE = 10
 KEEP_AFTER_VOTE = 1
+UPVOTE_THRESHOLD = 5    # upvotes to confirm profile into ref list
+DOWNVOTE_THRESHOLD = 10  # downvotes to remove profile
 
 IMAGE_EXTS = {".png", ".jpg", ".jpeg", ".webp", ".gif"}
 
@@ -88,13 +90,24 @@ def enforce_limits(collection: dict):
 
 
 def build_review(collection: dict, queue: dict) -> list[dict]:
-    """Build review set: unrated images, 5 per profile."""
+    """Build review set: balanced mix across profiles, max 2 unrated per profile."""
     rated = set(queue.get("rated", []))
-    review = []
+    buckets = []
+
     for key, images in collection.items():
         unrated = [img for img in images if img["path"] not in rated]
-        for img in unrated[:5]:
-            review.append(img)
+        if unrated:
+            picked = random.sample(unrated, min(2, len(unrated)))
+            buckets.append(picked)
+
+    # Interleave: round-robin across profiles for variety
+    review = []
+    while any(buckets):
+        for bucket in buckets:
+            if bucket:
+                review.append(bucket.pop(0))
+        buckets = [b for b in buckets if b]
+
     return review
 
 
@@ -122,6 +135,11 @@ def apply_vote(img_path: str, vote: str, collection: dict, queue: dict, votes: d
         votes["up"][handle] = votes["up"].get(handle, 0) + 1
     elif vote == "down":
         votes["down"][handle] = votes["down"].get(handle, 0) + 1
+        # Auto-remove at threshold
+        if votes["down"][handle] >= DOWNVOTE_THRESHOLD:
+            log.info("❌ %s hit %d downvotes — auto-removing from profiles",
+                     handle, DOWNVOTE_THRESHOLD)
+            _remove_handle_from_profiles(handle)
 
     # After voting on all images of a profile, keep only KEEP_AFTER_VOTE
     images = collection.get(profile_key, [])
@@ -138,9 +156,9 @@ def apply_vote(img_path: str, vote: str, collection: dict, queue: dict, votes: d
 
 def sync_profiles_to_ref():
     """Merge profile lists to reference directory.
-    - New profiles from either side are kept (union)
-    - Downvoted/removed profiles stay removed
-    - Votes file is copied as-is
+    - Profiles with >= UPVOTE_THRESHOLD upvotes are confirmed keepers
+    - Profiles with >= DOWNVOTE_THRESHOLD downvotes are removed
+    - Everything else is merged (union)
     """
     REF_DIR.mkdir(parents=True, exist_ok=True)
     profiles_src = DATA_DIR / "profiles"
@@ -154,7 +172,7 @@ def sync_profiles_to_ref():
     votes = _load_json(VOTES_FILE, {})
     removed = set()
     for h, c in votes.get("down", {}).items():
-        if c >= 2:
+        if c >= DOWNVOTE_THRESHOLD:
             removed.add(h.lower())
     for h in votes.get("remove_handles", []):
         removed.add(h.lower())
@@ -190,6 +208,26 @@ def sync_profiles_to_ref():
         shutil.copy2(VOTES_FILE, REF_DIR / "votes.json")
 
     log.info("Merged profiles to %s (%d handles removed)", REF_DIR, len(removed))
+
+
+def _remove_handle_from_profiles(handle: str):
+    """Remove a single handle from all profile list files."""
+    profiles_dir = DATA_DIR / "profiles"
+    if not profiles_dir.is_dir():
+        return
+    handle_lower = handle.lower()
+    for f in profiles_dir.glob("*.txt"):
+        lines = f.read_text().splitlines()
+        kept = []
+        for line in lines:
+            stripped = line.split("#")[0].strip()
+            parts = stripped.split(None, 1)
+            if len(parts) == 2:
+                h = parts[1].lstrip("@").split("/")[0].lower()
+                if h == handle_lower:
+                    continue
+            kept.append(line)
+        f.write_text("\n".join(kept) + "\n")
 
 
 def apply_removals(votes: dict):
@@ -403,7 +441,6 @@ border-radius:8px;display:none;z-index:99;font-size:13px}
 <div class="hdr"><h1>📊 infogdl</h1><div class="stats" id="st">...</div></div>
 <div class="bar">
 <button class="b1" onclick="scrape()">🔄 Scrape</button>
-<button class="b2" onclick="apply()">✅ Apply Votes</button>
 <button class="b3" onclick="sync()">📤 Sync to Ref</button>
 <div style="margin:8px auto;max-width:500px;display:flex;gap:6px">
 <select id="addplat" style="padding:6px;border-radius:6px;border:none;background:#16213e;color:#eee">
@@ -421,7 +458,9 @@ async function load(){
  let[s,r]=await Promise.all([fetch(B+'/api/stats').then(r=>r.json()),fetch(B+'/api/review').then(r=>r.json())]);
  document.getElementById('st').innerHTML=
   s.profiles+' profiles · '+s.total+' imgs · <span class="badge">'+s.in_review+' to review</span>'+
-  (s.scraping?' · <span class="spin">🔄</span> scraping':'');
+  (s.scraping?' · <span class="spin">🔄</span> scraping':'')+
+  (Object.keys(s.votes.up||{}).length?' · 👍'+Object.values(s.votes.up||{}).reduce((a,b)=>a+b,0):'')+
+  (Object.keys(s.votes.down||{}).length?' · 👎'+Object.values(s.votes.down||{}).reduce((a,b)=>a+b,0):'');
  R=r;render();
 }
 function render(){
@@ -451,10 +490,6 @@ async function rm(k,i){
 async function scrape(){toast('🔄 Starting scrape...');
  await fetch(B+'/api/scrape',{method:'POST',headers:{'Content-Type':'application/json'},body:'{}'});
  setTimeout(load,5000);setInterval(load,15000);
-}
-async function apply(){if(!confirm('Apply votes?'))return;
- await fetch(B+'/api/apply',{method:'POST',headers:{'Content-Type':'application/json'},body:'{}'});
- toast('✅ Applied');load();
 }
 async function sync(){
  await fetch(B+'/api/sync',{method:'POST',headers:{'Content-Type':'application/json'},body:'{}'});
