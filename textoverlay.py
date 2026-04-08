@@ -136,20 +136,21 @@ def overlay_text(img: Image.Image, text: str, image_path: str) -> Image.Image:
     # Find calmest region for placement
     band_y, position = _find_calmest_region(img)
 
-    # Font size
-    base_size = int(min(w, h) * 0.04)
-    base_size = max(14, min(base_size, 44))
-    font = _get_font(base_size)
-
-    # Wrap text
-    chars_per_line = max(20, int(w / (base_size * 0.55)))
-    lines = textwrap.wrap(text, width=chars_per_line)
-    if len(lines) > 6:
-        lines = lines[:5] + ["…"]
-
-    line_height = base_size + 4
-    text_height = len(lines) * line_height
+    # Auto-size font: shrink until all text fits in max 60% of image height
+    max_text_h = int(h * 0.6)
     padding = int(min(w, h) * 0.04)
+    font_size = int(min(w, h) * 0.04)
+    font_size = max(10, min(font_size, 44))
+
+    while font_size >= 8:
+        font = _get_font(font_size)
+        chars_per_line = max(15, int(w * 0.9 / (font_size * 0.52)))
+        lines = textwrap.wrap(text, width=chars_per_line)
+        line_height = font_size + 3
+        text_height = len(lines) * line_height
+        if text_height <= max_text_h:
+            break
+        font_size -= 1
 
     # Position text block in the calmest region
     if position == "top":
@@ -159,14 +160,13 @@ def overlay_text(img: Image.Image, text: str, image_path: str) -> Image.Image:
     else:
         y_start = h - text_height - padding * 2
 
-    # Clamp
     y_start = max(padding, min(y_start, h - text_height - padding))
 
     # Get contrast color for the actual placement region
     y_end = min(h, y_start + text_height + padding * 2)
     auto_color = _contrast_color(img, y_start, y_end)
 
-    # Blend vibe color with contrast color (vibe sets the tone, contrast ensures readability)
+    # Blend vibe color with contrast color
     text_color = tuple(int(v * 0.4 + a * 0.6) for v, a in zip(vibe_text_color, auto_color))
 
     # Draw background band
@@ -179,7 +179,7 @@ def overlay_text(img: Image.Image, text: str, image_path: str) -> Image.Image:
         img = img.convert("RGBA")
     img = Image.alpha_composite(img, overlay)
 
-    # Draw text
+    # Draw all lines — no truncation
     draw = ImageDraw.Draw(img)
     y = y_start
     for line in lines:
