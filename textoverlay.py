@@ -162,9 +162,19 @@ def overlay_text(img: Image.Image, text: str, image_path: str) -> Image.Image:
 
     y_start = max(padding, min(y_start, h - text_height - padding))
 
-    # Text color: overlay band is always dark, so always use light text
-    # Blend vibe color with white for readability on dark band
-    text_color = tuple(int(v * 0.6 + 255 * 0.4) for v in vibe_text_color)
+    # Text color: contrast against the actual overlay band (dark bg + original blended)
+    # The band is black at bg_alpha/255 opacity over the original image
+    y_end = min(h, y_start + text_height + padding * 2)
+    orig_brightness = _contrast_color(img, y_start, y_end)  # returns light or dark
+    # Simulate what the band looks like after compositing
+    band_brightness = (1 - bg_alpha / 255) * (orig_brightness[0] * 0.299 + orig_brightness[1] * 0.587 + orig_brightness[2] * 0.114)
+    # Always pick text that contrasts with the composited band
+    if band_brightness > 100:
+        # Rare: light image + low opacity band = still light → use dark vibe text
+        text_color = tuple(max(0, int(v * 0.3)) for v in vibe_text_color)
+    else:
+        # Common: dark band → use bright vibe text
+        text_color = tuple(min(255, int(v * 0.6 + 255 * 0.4)) for v in vibe_text_color)
 
     # Draw background band
     overlay = Image.new("RGBA", img.size, (0, 0, 0, 0))
