@@ -291,6 +291,8 @@ class Handler(SimpleHTTPRequestHandler):
                 ct = {"png": "image/png", "webp": "image/webp"}.get(
                     fpath.suffix.lstrip("."), "image/jpeg")
                 self.send_header("Content-Type", ct)
+                self.send_header("Cache-Control", "no-cache, no-store, must-revalidate")
+                self.send_header("Content-Length", fpath.stat().st_size)
                 self.end_headers()
                 self.wfile.write(fpath.read_bytes())
             else:
@@ -579,7 +581,8 @@ async function addText(i){
   let d=await r.json();
   if(d.ok){
    let img=document.querySelector('#c'+i+' img');
-   img.src=img.src.split('?')[0]+'?t='+Date.now();
+   img.src=img.src;  // force reload via no-cache headers
+   setTimeout(()=>{img.src=img.src},500);  // double-tap for stubborn browsers
    toast('📝 Text added ('+d.size+'B): '+d.text_preview);
   } else { toast('❌ '+d.error); }
  }catch(e){console.error(e);toast('Error: '+e.message);}
