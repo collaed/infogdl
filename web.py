@@ -272,6 +272,7 @@ class Handler(SimpleHTTPRequestHandler):
 
     def do_GET(self):
         path = urlparse(self.path).path
+        log.info("GET %s", path)
         if path == "/":
             self._html()
         elif path == "/api/review":
@@ -285,7 +286,13 @@ class Handler(SimpleHTTPRequestHandler):
                 "scraping": self.scraping,
             })
         elif path.startswith("/img/"):
-            fpath = IMG_DIR / unquote(path[5:])
+            # /img/TIMESTAMP/rel_path — strip timestamp
+            rest = path[5:]
+            slash = rest.find("/")
+            if slash > 0:
+                fpath = IMG_DIR / unquote(rest[slash + 1:])
+            else:
+                fpath = IMG_DIR / unquote(rest)
             if fpath.exists():
                 data = fpath.read_bytes()
                 etag = f'"{hash(data[:1000]) & 0xffffffff:08x}"'
@@ -536,7 +543,7 @@ function render(){
   let score=up-dn;
   let skip=score<5?`<button class="sk" onclick="vote(${i},'skip')">⏭</button>`:'';
   return `<div class="card" id="c${i}">
-  <img src="${B}/img/${encodeURIComponent(s.rel)}" loading="lazy">
+  <img src="${B}/img/${Date.now()}/${encodeURIComponent(s.rel)}" loading="lazy">
   <div class="ci"><div class="cm"><span class="a">${s.profile_key}</span> <span style="color:#666">(${score>=0?'+':''}${score})</span><br>${s.name} · ${Math.round(s.size_kb)}KB
   ${s.meta&&s.meta.text?'<br><em>'+s.meta.text.substring(0,120)+'</em>':''}</div>
   <div class="vb"><button class="up" onclick="vote(${i},'up')">👍</button>
