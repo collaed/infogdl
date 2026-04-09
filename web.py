@@ -90,17 +90,36 @@ def enforce_limits(collection: dict):
 
 
 def build_review(collection: dict, queue: dict) -> list[dict]:
-    """Build review set: balanced mix across profiles, max 2 unrated per profile."""
+    """Build review set: more slots for undecided profiles, fewer for confirmed ones."""
     rated = set(queue.get("rated", []))
-    buckets = []
+    votes = Handler.votes
 
+    buckets = []
     for key, images in collection.items():
         unrated = [img for img in images if img["path"] not in rated]
-        if unrated:
-            picked = random.sample(unrated, min(2, len(unrated)))
-            buckets.append(picked)
+        if not unrated:
+            continue
 
-    # Interleave: round-robin across profiles for variety
+        handle = key.split("/")[-1]
+        up = votes.get("up", {}).get(handle, 0)
+        down = votes.get("down", {}).get(handle, 0)
+        score = up - down
+
+        # More slots for undecided profiles
+        if score >= UPVOTE_THRESHOLD:
+            n = 1  # confirmed — just 1 to maintain
+        elif score <= -3:
+            n = 1  # trending down — 1 chance to redeem
+        elif abs(score) <= 1:
+            n = 4  # new/undecided — show more to evaluate
+        else:
+            n = 2  # some votes but not decided yet
+
+        picked = random.sample(unrated, min(n, len(unrated)))
+        buckets.append(picked)
+
+    # Interleave round-robin
+    random.shuffle(buckets)
     review = []
     while any(buckets):
         for bucket in buckets:
