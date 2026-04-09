@@ -81,8 +81,8 @@ def _detect_vibe(text: str, seed: int) -> str:
 
 
 def _find_calmest_corner(img: Image.Image) -> str:
-    """Find the corner quadrant with least color variation.
-    Returns 'top-left', 'top-right', 'bottom-left', or 'bottom-right'."""
+    """Find the best corner for text, strongly preferring bottom.
+    Bottom corners get a 3x variance bonus (lower = better)."""
     small = img.resize((100, 100))
     arr = np.array(small, dtype=np.float32)
     if arr.ndim == 2:
@@ -92,14 +92,17 @@ def _find_calmest_corner(img: Image.Image) -> str:
     mh, mw = h // 2, w // 2
 
     corners = {
-        "top-left": arr[:mh, :mw],
-        "top-right": arr[:mh, mw:],
-        "bottom-left": arr[mh:, :mw],
-        "bottom-right": arr[mh:, mw:],
+        "top-left": np.var(arr[:mh, :mw]),
+        "top-right": np.var(arr[:mh, mw:]),
+        "bottom-left": np.var(arr[mh:, :mw]),
+        "bottom-right": np.var(arr[mh:, mw:]),
     }
 
-    best = min(corners, key=lambda k: np.var(corners[k]))
-    return best
+    # Heavily penalize top corners — faces/heads are usually at the top
+    corners["top-left"] *= 3.0
+    corners["top-right"] *= 3.0
+
+    return min(corners, key=corners.get)
 
 
 def _contrast_color(img: Image.Image, y_start: int, y_end: int) -> tuple:
