@@ -61,7 +61,8 @@ def _load_cookie_file(path: str, domain: str) -> dict[str, str]:
                 if len(parts) >= 7:
                     host, _, _, _, _, name, value = parts[:7]
                     if domain in host:
-                        cookies[name] = value
+                        # Strip surrounding quotes (LinkedIn JSESSIONID has them)
+                        cookies[name] = value.strip('"')
         if cookies:
             log.info("Loaded %d cookies from file for %s", len(cookies), domain)
     except Exception as e:

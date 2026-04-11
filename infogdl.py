@@ -68,6 +68,16 @@ def _analyze_and_sort(fpath: Path, out_dir: Path, cfg: dict,
 
     info = analyze(img)
 
+    # Skip non-infographic images (photos, memes without structure)
+    if not info.get("is_infographic", True):
+        log.info("⏭ Skipping %s (photo, not infographic: %d colors, %.0f%% uniformity)",
+                 fpath.name, info.get("distinct_colors", 0),
+                 info.get("uniformity", 0) * 100)
+        img.close()
+        if delete:
+            fpath.unlink()
+        return None, 0, 0
+
     if limits:
         full = _check_limits(out_dir, limits)
         if full.get(info["orientation"], False):
