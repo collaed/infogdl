@@ -131,9 +131,11 @@ def build_review(collection: dict, queue: dict) -> list[dict]:
 
 
 def apply_vote(img_path: str, vote: str, collection: dict, queue: dict, votes: dict):
-    """Process a vote: mark rated, keep 1 representative, sync profiles."""
+    """Process a vote: mark rated (up/down only), skip leaves image in pool."""
     queue.setdefault("rated", [])
-    if img_path not in queue["rated"]:
+
+    # Only up/down removes from pool — skip leaves it for next time
+    if vote in ("up", "down") and img_path not in queue["rated"]:
         queue["rated"].append(img_path)
 
     # Find profile
@@ -575,8 +577,14 @@ async function vote(i,d){
  let s=R[i];
  await fetch(B+'/api/vote',{method:'POST',headers:{'Content-Type':'application/json'},
   body:JSON.stringify({img_path:s.path,vote:d})});
- document.getElementById('c'+i).classList.add('voted');
- toast(d=='up'?'👍':d=='skip'?'⏭ Skipped':'👎');setTimeout(load,500);
+ // Remove card from DOM and from local list — don't reload
+ let card=document.getElementById('c'+i);
+ card.style.transition='opacity 0.3s';card.style.opacity='0';
+ setTimeout(()=>card.remove(),300);
+ R[i]=null;
+ let remaining=R.filter(x=>x).length;
+ toast((d=='up'?'👍':d=='skip'?'⏭':'👎')+' · '+remaining+' left');
+ if(remaining===0){toast('All reviewed! Hit 🔀 Shuffle');load();}
 }
 async function scrape(){toast('🔄 Starting scrape...');
  await fetch(B+'/api/scrape',{method:'POST',headers:{'Content-Type':'application/json'},body:'{}'});
